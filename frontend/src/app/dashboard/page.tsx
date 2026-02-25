@@ -4,393 +4,413 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import dynamic from 'next/dynamic';
 import api from '@/lib/api';
-import { MapPin, LogIn, LogOut, Clock, User, LogOut as LogoutIcon, Calendar, CheckCircle2, History, Settings } from 'lucide-react';
+import {
+    MapPin, LogIn, LogOut, Clock, User, Calendar,
+    CheckCircle2, History, Settings, AlertCircle, Radio,
+    ChevronRight, Map as MapIcon, Navigation2, Loader2
+} from 'lucide-react';
+import { useGeolocation } from '@/hooks/useGeolocation';
+import LocationGate from '@/components/LocationGate';
+import PerimeterBadge from '@/components/PerimeterBadge';
+import { checkPerimeter } from '@/lib/locationService';
 
 const AttendanceMap = dynamic(() => import('@/components/AttendanceMap'), {
     ssr: false,
-    loading: () => <div className="h-[400px] bg-slate-900 rounded-xl animate-pulse flex items-center justify-center text-slate-500">Initializing Map...</div>
+    loading: () => (
+        <div className="h-[450px] rounded-xl flex items-center justify-center"
+            style={{ background: 'var(--bg-input)' }}>
+            <div className="text-center">
+                <div className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin mx-auto mb-3"
+                    style={{ borderColor: 'var(--primary)', borderTopColor: 'transparent' }}></div>
+                <span className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Loading map...</span>
+            </div>
+        </div>
+    )
 });
 
 export default function DashboardPage() {
     const { user, logout } = useAuth();
-    const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
-    const [accuracy, setAccuracy] = useState<number | null>(null);
-    const [geofences, setGeofences] = useState([]);
+
+    // Core geolocation hook
+    const geo = useGeolocation();
+
+    const [geofences, setGeofences] = useState<any[]>([]);
     const [selectedGeofence, setSelectedGeofence] = useState<number | null>(null);
     const [attendance, setAttendance] = useState<any>(null);
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState({ type: '', text: '' });
     const [selectedSession, setSelectedSession] = useState('Morning');
-    const [isInPlace, setIsInPlace] = useState(false);
-
-    const SESSIONS = [
-        { name: 'Morning', time: '09:00 AM - 01:00 PM' },
-        { name: 'Afternoon', time: '01:00 PM - 05:00 PM' },
-        { name: 'Evening', time: '05:00 PM - 09:00 PM' },
-        { name: 'Night', time: '09:00 PM - 01:00 AM' }
-    ];
 
     const fetchGeofences = useCallback(async () => {
         try {
             const res = await api.get('/geofences/');
             setGeofences(res.data);
-
-            // If user has an assigned geofence, lock onto it
             if (user?.assigned_geofence_id) {
                 setSelectedGeofence(user.assigned_geofence_id);
             } else if (res.data.length > 0) {
                 setSelectedGeofence(res.data[0].id);
             }
-        } catch (err) {
-            console.error(err);
-        }
+        } catch (err) { console.error(err); }
     }, [user?.assigned_geofence_id]);
 
     const fetchHistory = useCallback(async () => {
         try {
             const res = await api.get('/attendance/history');
             setHistory(res.data);
-            // Check for active session in history
             const active = res.data.find((r: any) => !r.check_out_time);
             if (active) setAttendance(active);
-        } catch (err) {
-            console.error(err);
-        }
+        } catch (err) { console.error(err); }
     }, []);
-
-    const haversine_distance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-        const R = 6371000; // Earth radius in meters
-        const dLat = (lat2 - lat1) * Math.PI / 180;
-        const dLon = (lon2 - lon1) * Math.PI / 180;
-        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-            Math.sin(dLon / 2) * Math.sin(dLon / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c;
-    };
-
-    const requestLocation = useCallback(() => {
-        if (!("geolocation" in navigator)) {
-            setMessage({ type: 'error', text: 'Geolocation is not supported' });
-            return;
-        }
-
-        const watchId = navigator.geolocation.watchPosition(
-            (position) => {
-                const userLat = position.coords.latitude;
-                const userLng = position.coords.longitude;
-                setLocation({ lat: userLat, lng: userLng });
-                setAccuracy(position.coords.accuracy);
-
-                // Check distance if geofence is selected
-                if (selectedGeofence && geofences.length > 0) {
-                    const gf = geofences.find((g: any) => g.id === selectedGeofence) as any;
-                    if (gf) {
-                        const distance = haversine_distance(userLat, userLng, gf.latitude, gf.longitude);
-                        setIsInPlace(distance <= gf.radius);
-                    }
-                }
-            },
-            () => {
-                setMessage({ type: 'error', text: 'Location access denied. Please enable GPS in your browser.' });
-            },
-            { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
-        );
-
-        return () => navigator.geolocation.clearWatch(watchId);
-    }, [selectedGeofence, geofences]);
 
     useEffect(() => {
         fetchGeofences();
         fetchHistory();
     }, [fetchGeofences, fetchHistory]);
 
-    useEffect(() => {
-        const cleanup = requestLocation();
-        return () => {
-            if (cleanup) cleanup();
-        };
-    }, [requestLocation]);
+    // Calculate geofence status
+    const targetGeofence = geofences.find(g => g.id === selectedGeofence);
+    const perimeterStatus = (geo.location && targetGeofence)
+        ? checkPerimeter(geo.location, targetGeofence)
+        : { inside: false, distance: 0, threshold: 0, overshoot: 0 };
 
     const handleCheckIn = async () => {
-        if (!location || !selectedGeofence) return;
+        if (!geo.location || !selectedGeofence) return;
+
+        // Double check status client side
+        if (!perimeterStatus.inside) {
+            setMessage({ type: 'error', text: 'You must be inside the geofence perimeter to check-in.' });
+            return;
+        }
+
         setLoading(true);
         try {
             const res = await api.post('/attendance/check-in', {
                 geofence_id: selectedGeofence,
-                latitude: location.lat,
-                longitude: location.lng,
-                accuracy: accuracy,
+                latitude: geo.location.lat,
+                longitude: geo.location.lng,
+                accuracy: geo.accuracy,
                 session_name: selectedSession
             });
             setAttendance(res.data);
             fetchHistory();
-            setMessage({ type: 'success', text: 'Check-in recorded successfully!' });
+            setMessage({ type: 'success', text: 'Check-in recorded!' });
         } catch (err: any) {
             setMessage({ type: 'error', text: err.response?.data?.detail || 'Check-in failed' });
-        } finally {
-            setLoading(false);
-        }
+        } finally { setLoading(false); }
     };
 
     const handleCheckOut = async () => {
-        if (!location) return;
+        if (!geo.location) return;
         setLoading(true);
         try {
-            const res = await api.post('/attendance/check-out', {
-                latitude: location.lat,
-                longitude: location.lng
+            await api.post('/attendance/check-out', {
+                latitude: geo.location.lat,
+                longitude: geo.location.lng
             });
             setAttendance(null);
             fetchHistory();
-            setMessage({ type: 'success', text: 'Check-out recorded successfully!' });
+            setMessage({ type: 'success', text: 'Check-out recorded!' });
         } catch (err: any) {
             setMessage({ type: 'error', text: err.response?.data?.detail || 'Check-out failed' });
-        } finally {
-            setLoading(false);
-        }
+        } finally { setLoading(false); }
     };
 
     return (
-        <div className="min-h-screen bg-[#0f172a] text-slate-200">
-            {/* Top Navigation */}
-            <nav className="glass-card sticky top-0 z-30 border-b border-white/5 px-6 py-4">
-                <div className="max-w-7xl mx-auto flex justify-between items-center">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
-                            <CheckCircle2 className="text-white w-6 h-6" />
+        <LocationGate
+            status={geo.status}
+            error={geo.error}
+            onRetry={geo.retry}
+        >
+            <div className="min-h-screen font-sans" style={{ background: 'var(--bg-page)' }}>
+                {/* ── Nav ──────────────────────────────────────── */}
+                <nav className="sticky top-0 z-30 px-6 py-4 glass border-b border-[var(--border-default)]">
+                    <div className="max-w-7xl mx-auto flex justify-between items-center">
+                        <div className="flex items-center gap-4 group">
+                            <div className="w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg transform transition-transform group-hover:scale-110"
+                                style={{ background: 'linear-gradient(135deg, var(--primary), #818cf8)' }}>
+                                <CheckCircle2 className="text-white" size={22} />
+                            </div>
+                            <span className="text-xl font-extrabold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                                GeoTrack
+                            </span>
                         </div>
-                        <span className="text-xl font-bold text-white tracking-tight">GeoTrack</span>
-                    </div>
-                    <div className="flex items-center gap-6">
-                        <div className="hidden md:flex items-center gap-2 text-sm font-medium text-slate-400">
-                            <User size={16} /> {user?.full_name}
+                        <div className="flex items-center gap-6">
+                            <button className="p-2.5 rounded-xl transition-all hover:bg-white hover:shadow-sm" style={{ color: 'var(--text-secondary)' }}>
+                                <Settings size={20} />
+                            </button>
+                            <button
+                                onClick={logout}
+                                className="flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0"
+                                style={{ background: 'var(--danger-light)', color: 'var(--danger)', border: '1px solid rgba(239, 68, 68, 0.1)' }}>
+                                <LogOut size={16} /> Sign Out
+                            </button>
                         </div>
-                        <button
-                            onClick={logout}
-                            className="flex items-center gap-2 text-sm font-semibold text-red-400 hover:text-red-300 transition-colors"
-                        >
-                            <LogoutIcon size={16} /> Logout
-                        </button>
                     </div>
-                </div>
-            </nav>
+                </nav>
 
-            <main className="max-w-7xl mx-auto p-6 md:p-8 space-y-8">
-                {/* Hero / Header Section */}
-                <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-                    <div>
-                        <h2 className="text-3xl font-extrabold text-white">Employee Dashboard</h2>
-                        <p className="text-slate-400">Welcome back, {user?.full_name}. Here is your current status.</p>
-                    </div>
-                </div>
+                <main className="max-w-7xl mx-auto px-6 py-12 md:py-16">
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-14">
 
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    {/* Left Column: Map & History */}
-                    <div className="lg:col-span-8 space-y-8">
-                        <div className="glass-card rounded-2xl border border-white/10 overflow-hidden">
-                            <div className="p-5 border-b border-white/5 flex justify-between items-center">
-                                <h3 className="font-bold text-lg flex items-center gap-2">
-                                    <MapPin className="text-blue-500" size={20} /> Current Location
-                                </h3>
-                                <div className="flex items-center gap-2">
-                                    <span className={`w-2 h-2 rounded-full ${location ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
-                                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-                                        {location ? 'Signal Active' : 'Offline'}
-                                    </span>
+                        {/* ── LEFT COL ──────────────────────────────── */}
+                        <div className="lg:col-span-8 space-y-10 animate-fade-in">
+                            {/* Greeting */}
+                            <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+                                <div>
+                                    <h1 className="text-4xl font-black tracking-tight leading-tight" style={{ color: 'var(--text-primary)' }}>
+                                        Hi, {user?.full_name?.split(' ')[0] || 'Member'}!
+                                    </h1>
+                                    <p className="text-base font-medium mt-2" style={{ color: 'var(--text-secondary)' }}>
+                                        {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                                    </p>
+                                </div>
+                                <div className="px-5 py-2.5 rounded-2xl bg-white shadow-premium flex items-center gap-3">
+                                    <div className="w-2.5 h-2.5 rounded-full animate-pulse" style={{ background: 'var(--success)' }}></div>
+                                    <span className="text-sm font-bold tracking-tight" style={{ color: 'var(--text-secondary)' }}>System Active</span>
                                 </div>
                             </div>
-                            <div className="p-1 bg-slate-900/40">
-                                <AttendanceMap userLocation={location} geofences={geofences} />
-                            </div>
-                        </div>
 
-                        {/* Personal History */}
-                        <div className="glass-card rounded-2xl border border-white/10 overflow-hidden">
-                            <div className="p-5 border-b border-white/5 flex items-center gap-2">
-                                <History className="text-indigo-400" size={20} />
-                                <h3 className="font-bold text-lg text-white">Your Attendance History</h3>
-                            </div>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse">
-                                    <thead>
-                                        <tr className="bg-white/5 text-slate-400 text-[10px] font-bold uppercase tracking-widest">
-                                            <th className="px-6 py-4">Date</th>
-                                            <th className="px-6 py-4">Check-in</th>
-                                            <th className="px-6 py-4">Check-out</th>
-                                            <th className="px-6 py-4">Duration</th>
-                                            <th className="px-6 py-4">Status</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-white/5">
-                                        {history.map((record: any) => (
-                                            <tr key={record.id} className="hover:bg-white/5 transition-colors">
-                                                <td className="px-6 py-4 text-sm font-medium text-slate-300">
-                                                    {new Date(record.check_in_time).toLocaleDateString()}
-                                                </td>
-                                                <td className="px-6 py-4 text-sm text-slate-400 font-mono">
-                                                    {new Date(record.check_in_time).toLocaleTimeString()}
-                                                </td>
-                                                <td className="px-6 py-4 text-sm text-slate-400 font-mono">
-                                                    {record.check_out_time ? new Date(record.check_out_time).toLocaleTimeString() : '--:--'}
-                                                </td>
-                                                <td className="px-6 py-4 text-sm font-mono text-blue-400">
-                                                    {record.total_duration ? `${record.total_duration}m` : 'In Session'}
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <span className={`px-2 py-1 rounded-md text-[10px] font-bold ${record.check_out_time ? 'bg-slate-500/10 text-slate-400' : 'bg-green-500/10 text-green-400 animate-pulse'}`}>
-                                                        {record.check_out_time ? 'COMPLETED' : 'ACTIVE'}
-                                                    </span>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                        {history.length === 0 && (
-                                            <tr>
-                                                <td colSpan={5} className="px-6 py-10 text-center text-slate-500 italic text-sm">
-                                                    No attendance records found. Start by checking in above!
-                                                </td>
-                                            </tr>
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
+                            {/* Attendance Controls */}
+                            <div className="office-card group">
+                                <div className="p-1">
+                                    <div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x" style={{ borderColor: 'var(--border-light)' }}>
+                                        {/* Status Info */}
+                                        <div className="p-10 flex-1">
+                                            <div className="flex items-center gap-2.5 text-[11px] font-black uppercase tracking-[0.15em] mb-6"
+                                                style={{ color: 'var(--primary)' }}>
+                                                <div className="w-1.5 h-1.5 rounded-full bg-current" />
+                                                Live Network Identification
+                                            </div>
 
-                    {/* Right Column: Actions & Session Stats */}
-                    <div className="lg:col-span-4 space-y-6">
-                        <div className="glass-card p-6 rounded-2xl border border-white/10 text-center relative overflow-hidden group">
-                            <div className="absolute top-0 right-0 p-3 opacity-10">
-                                <Clock size={80} className="text-blue-500" />
-                            </div>
+                                            <PerimeterBadge
+                                                userLocation={geo.location}
+                                                geofence={targetGeofence}
+                                                variant="full"
+                                            />
 
-                            <h3 className="text-slate-400 font-semibold mb-6 uppercase tracking-wider text-sm">Active Session</h3>
-                            <div className="mb-6">
-                                <span className={`inline-flex items-center px-4 py-1.5 rounded-full text-xs font-bold border ${attendance ? 'bg-blue-500/10 border-blue-500/20 text-blue-400 animate-pulse' : 'bg-slate-500/10 border-slate-500/20 text-slate-400'}`}>
-                                    {attendance ? 'LIVE NOW' : 'OFF DUTY'}
-                                </span>
-                            </div>
-                            <div className="text-4xl font-black text-white mb-2">
-                                {attendance ? 'Present' : 'Offline'}
-                            </div>
-                            <p className="text-slate-500 text-sm mb-6">
-                                {attendance ? `Started at ${new Date(attendance.check_in_time).toLocaleTimeString()}` : 'Check-in to start your work day'}
-                            </p>
-                        </div>
-
-                        {/* Actions Card */}
-                        <div className="glass-card p-6 rounded-2xl border border-white/10 shadow-xl">
-                            <h3 className="font-bold text-lg mb-6 flex items-center gap-2 text-white">
-                                <div className="w-1.5 h-6 bg-blue-500 rounded-full"></div>
-                                Operations
-                            </h3>
-
-                            {message.text && (
-                                <div className={`mb-6 p-4 rounded-xl border text-sm flex items-start gap-3 ${message.type === 'error'
-                                    ? 'bg-red-500/10 border-red-500/20 text-red-400'
-                                    : 'bg-green-500/10 border-green-500/20 text-green-400'
-                                    }`}>
-                                    <div className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${message.type === 'error' ? 'bg-red-500' : 'bg-green-500'}`}></div>
-                                    {message.text}
-                                </div>
-                            )}
-
-                            {!attendance ? (
-                                <div className="space-y-6">
-                                    <div>
-                                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1 mb-2 block flex items-center gap-1.5">
-                                            Choose Location
-                                            {user?.assigned_geofence_id && <span className="text-[9px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20">ASSIGNED</span>}
-                                        </label>
-                                        <div className="relative">
-                                            <select
-                                                disabled={!!user?.assigned_geofence_id}
-                                                className={`w-full bg-slate-800/50 border border-slate-700 text-white p-3.5 rounded-xl accent-blue-600 focus:ring-2 focus:ring-blue-500/50 outline-none transition-all appearance-none cursor-pointer ${user?.assigned_geofence_id ? 'opacity-70 cursor-not-allowed' : ''}`}
-                                                value={selectedGeofence || ''}
-                                                onChange={(e) => setSelectedGeofence(Number(e.target.value))}
-                                            >
-                                                {geofences.map((gf: any) => (
-                                                    <option key={gf.id} value={gf.id} className="bg-slate-900">{gf.name}</option>
-                                                ))}
-                                            </select>
-                                            {user?.assigned_geofence_id && (
-                                                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400">
-                                                    <Settings size={16} className="animate-pulse" />
+                                            <div className="mt-10 space-y-6">
+                                                <div className="space-y-2">
+                                                    <label className="label">Designated Perimeter</label>
+                                                    <div className="relative group/select">
+                                                        <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 transition-colors group-focus-within/select:text-[var(--primary)]" size={18}
+                                                            style={{ color: 'var(--text-tertiary)' }} />
+                                                        <select
+                                                            className="input-premium pl-12 h-14 cursor-pointer appearance-none shadow-sm"
+                                                            value={selectedGeofence || ''}
+                                                            onChange={(e) => setSelectedGeofence(Number(e.target.value))}
+                                                            disabled={!!user?.assigned_geofence_id}
+                                                        >
+                                                            {geofences.map((gf: any) => (
+                                                                <option key={gf.id} value={gf.id}>{gf.name}</option>
+                                                            ))}
+                                                        </select>
+                                                        <ChevronRight className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none rotate-90 opacity-20"
+                                                            size={16} />
+                                                    </div>
                                                 </div>
-                                            )}
-                                        </div>
-                                    </div>
 
-                                    <div>
-                                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1 mb-2 block">Select Session</label>
-                                        <div className="grid grid-cols-1 gap-2">
-                                            {SESSIONS.map((session) => (
-                                                <button
-                                                    key={session.name}
-                                                    onClick={() => setSelectedSession(session.name)}
-                                                    className={`p-3 rounded-xl border text-left transition-all ${selectedSession === session.name
-                                                        ? 'bg-blue-600/20 border-blue-500 text-blue-400'
-                                                        : 'bg-slate-800/30 border-slate-700 text-slate-400 hover:border-slate-600'
-                                                        }`}
-                                                >
-                                                    <div className="text-sm font-bold">{session.name}</div>
-                                                    <div className="text-[10px] opacity-60">{session.time}</div>
-                                                </button>
-                                            ))}
+                                                <div className="space-y-2">
+                                                    <label className="label">Active Shift</label>
+                                                    <div className="grid grid-cols-2 gap-4">
+                                                        {['Morning', 'Afternoon'].map(s => (
+                                                            <button
+                                                                key={s}
+                                                                onClick={() => setSelectedSession(s)}
+                                                                disabled={!!attendance}
+                                                                className={`py-3.5 px-6 rounded-2xl text-[13px] font-bold border transition-all ${selectedSession === s
+                                                                        ? 'bg-white shadow-xl border-[var(--primary)] text-[var(--primary)] scale-[1.02]'
+                                                                        : 'bg-[var(--bg-input)] border-transparent text-[var(--text-secondary)] hover:bg-white hover:border-[var(--border-default)]'
+                                                                    }`}
+                                                            >
+                                                                {s}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
-                                    </div>
 
-                                    <div className={`relative ${!isInPlace ? 'group' : ''}`}>
-                                        <div className={`${!isInPlace ? 'blur-[4px] pointer-events-none opacity-50 transition-all duration-500' : ''}`}>
+                                        {/* Action Button */}
+                                        <div className="p-10 lg:w-[360px] flex flex-col items-center justify-center text-center bg-slate-50/50">
+                                            <div className={`w-24 h-24 rounded-[32px] flex items-center justify-center mb-8 shadow-2xl transition-all duration-500 scale-110 ${attendance ? 'bg-[var(--danger)] animate-none' : (perimeterStatus.inside ? 'bg-[var(--primary)] animate-pulse' : 'bg-slate-300')
+                                                }`}>
+                                                {attendance ? <LogOut size={40} color="white" /> : <LogIn size={40} color="white" />}
+                                            </div>
+
+                                            <h3 className="text-2xl font-black mb-3">
+                                                {attendance ? 'Check Out' : 'Check In'}
+                                            </h3>
+                                            <p className="text-[13px] font-medium mb-10 max-w-[200px]" style={{ color: 'var(--text-tertiary)' }}>
+                                                {!geo.location ? 'Acquiring high-accuracy GPS signal...' :
+                                                    (!perimeterStatus.inside ? 'Access restricted: Outside perimeter' : 'Identification verified. Ready to start.')}
+                                            </p>
+
                                             <button
-                                                disabled={loading || !location || !isInPlace}
-                                                onClick={handleCheckIn}
-                                                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 transition-all active:scale-[0.98] disabled:opacity-50"
+                                                onClick={attendance ? handleCheckOut : handleCheckIn}
+                                                disabled={(!attendance && !perimeterStatus.inside) || loading || !geo.location}
+                                                className={`w-full py-5 rounded-3xl font-black text-base transition-all transform active:scale-95 ${attendance
+                                                        ? 'btn-danger shadow-2xl shadow-red-200'
+                                                        : (perimeterStatus.inside ? 'btn-primary shadow-2xl shadow-indigo-200' : 'bg-slate-200 text-slate-400 cursor-not-allowed')
+                                                    }`}
                                             >
                                                 {loading ? (
-                                                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                                    <div className="flex items-center justify-center gap-3">
+                                                        <Loader2 className="animate-spin" size={20} />
+                                                        Processing...
+                                                    </div>
                                                 ) : (
-                                                    <>
-                                                        <LogIn size={20} /> Register Check-in
-                                                    </>
+                                                    attendance ? `Exit ${selectedSession}` : `Start ${selectedSession}`
                                                 )}
                                             </button>
                                         </div>
-                                        {!isInPlace && location && (
-                                            <div className="absolute inset-0 flex items-center justify-center">
-                                                <div className="bg-slate-900/80 px-4 py-2 rounded-lg border border-white/10 text-xs font-bold text-slate-400 backdrop-blur-sm">
-                                                    NOT IN RANGE
-                                                </div>
-                                            </div>
-                                        )}
                                     </div>
                                 </div>
-                            ) : (
-                                <button
-                                    disabled={loading || !location}
-                                    onClick={handleCheckOut}
-                                    className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-red-500/20 transition-all active:scale-[0.98] disabled:opacity-50"
-                                >
-                                    {loading ? (
-                                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                                    ) : (
-                                        <>
-                                            <LogOut size={20} /> Register Check-out
-                                        </>
-                                    )}
-                                </button>
-                            )}
+                            </div>
 
-                            {!location && (
-                                <div className="mt-4 flex items-center justify-center gap-2 text-orange-400/80 italic text-[11px] font-medium animate-pulse">
-                                    <MapPin size={12} /> Syncing GPS satellite data...
+                            {/* Map Card */}
+                            <div className="office-card overflow-hidden">
+                                <div className="px-8 py-7 flex items-center justify-between glass border-b border-[var(--border-default)]">
+                                    <div>
+                                        <h3 className="text-lg font-bold flex items-center gap-3">
+                                            <div className="p-2 rounded-lg bg-indigo-50 text-[var(--primary)]">
+                                                <Navigation2 size={18} fill="currentColor" />
+                                            </div>
+                                            Spatial Verification
+                                        </h3>
+                                    </div>
+                                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-600 text-[10px] font-black uppercase tracking-widest">
+                                        <Radio size={12} className="animate-pulse" /> Live Tracking
+                                    </div>
                                 </div>
-                            )}
+                                <div className="p-0">
+                                    <AttendanceMap
+                                        userLocation={geo.location}
+                                        geofences={geofences}
+                                        isAdmin={false}
+                                    />
+                                </div>
+                            </div>
                         </div>
+
+                        {/* ── RIGHT COL ─────────────────────────────── */}
+                        <div className="lg:col-span-4 space-y-8">
+                            {/* Profile Card */}
+                            <div className="office-card p-8 bg-gradient-to-br from-white to-slate-50">
+                                <div className="flex items-center gap-5 mb-8">
+                                    <div className="w-16 h-16 rounded-3xl flex items-center justify-center text-2xl font-black shadow-inner"
+                                        style={{ background: 'var(--primary-light)', color: 'var(--primary)', border: '2px solid white' }}>
+                                        {user?.full_name?.[0] || 'U'}
+                                    </div>
+                                    <div>
+                                        <p className="text-lg font-black leading-tight" style={{ color: 'var(--text-primary)' }}>{user?.full_name}</p>
+                                        <p className="text-sm font-bold mt-0.5" style={{ color: 'var(--text-tertiary)' }}>Staff ID · {user?.id || '---'}</p>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-1">
+                                    {[
+                                        { label: 'Network Integrity', value: 'Encrypted', color: 'emerald' },
+                                        { label: 'GPS Precision', value: '0.8m Root', color: 'indigo' },
+                                        { label: 'Security Level', value: 'Level 4', color: 'indigo' }
+                                    ].map((item, i) => (
+                                        <div key={i} className="flex justify-between items-center py-4 border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors rounded-xl px-2">
+                                            <span className="text-[13px] font-bold text-slate-500">{item.label}</span>
+                                            <span className={`text-[13px] font-black text-${item.color}-600`}>{item.value}</span>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="mt-6 p-5 rounded-2xl bg-indigo-50/50 border border-indigo-100 flex items-center gap-4">
+                                    <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-[var(--primary)] shadow-sm">
+                                        <Calendar size={20} />
+                                    </div>
+                                    <div>
+                                        <p className="text-[13px] font-black" style={{ color: 'var(--text-primary)' }}>Calendar Sync</p>
+                                        <p className="text-[11px] font-bold" style={{ color: 'var(--text-tertiary)' }}>No upcoming blackout days</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Activity Feed */}
+                            <div className="office-card flex flex-col h-[580px]">
+                                <div className="px-8 py-7 glass border-b border-[var(--border-default)]">
+                                    <h3 className="text-lg font-bold flex items-center gap-3">
+                                        <div className="p-2 rounded-lg bg-indigo-50 text-[var(--primary)]">
+                                            <History size={18} />
+                                        </div>
+                                        Recent Activity
+                                    </h3>
+                                </div>
+                                <div className="flex-1 overflow-y-auto custom-scrollbar">
+                                    {history.map((record: any, i: number) => (
+                                        <div key={record.id} className="p-7 border-b border-slate-100 hover:bg-slate-50 transition-all group">
+                                            <div className="flex justify-between items-start mb-4">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-10 h-10 rounded-xl bg-white shadow-premium flex items-center justify-center text-slate-400 group-hover:text-[var(--primary)] transition-colors">
+                                                        <Clock size={18} />
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-sm font-black block" style={{ color: 'var(--text-primary)' }}>
+                                                            {new Date(record.check_in_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                                        </span>
+                                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest leading-none">
+                                                            Verified Session
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${record.check_out_time ? 'bg-slate-100 text-slate-500' : 'bg-emerald-100 text-emerald-600 animate-pulse'
+                                                    }`}>
+                                                    {record.check_out_time ? 'Terminal' : 'Active'}
+                                                </div>
+                                            </div>
+
+                                            <div className="flex items-center gap-6 py-1">
+                                                <div className="flex flex-col">
+                                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Entry</span>
+                                                    <span className="text-sm font-black text-slate-700">
+                                                        {new Date(record.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                    </span>
+                                                </div>
+                                                {record.check_out_time && (
+                                                    <>
+                                                        <div className="w-8 h-px bg-slate-200" />
+                                                        <div className="flex flex-col">
+                                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Exit</span>
+                                                            <span className="text-sm font-black text-slate-700">
+                                                                {new Date(record.check_out_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                            </span>
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {history.length === 0 && (
+                                        <div className="flex flex-col items-center justify-center h-full p-12 text-center">
+                                            <div className="w-20 h-20 rounded-full bg-slate-50 flex items-center justify-center mb-6">
+                                                <History size={32} className="text-slate-200" />
+                                            </div>
+                                            <p className="text-sm font-bold text-slate-400">No telemetry data recorded for this user yet.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
                     </div>
+                </main>
+            </div>
+
+            {/* Premium Notifications */}
+            {message.text && (
+                <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-50 p-6 glass-dark rounded-3xl shadow-2xl flex items-center gap-4 animate-slide-up min-w-[360px]">
+                    <div className={`w-3 h-3 rounded-full ${message.type === 'error' ? 'bg-red-500 shadow-[0_0_12px_rgba(239, 68, 68, 0.5)]' : 'bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.5)]'}`} />
+                    <span className="text-sm font-bold text-white tracking-tight">{message.text}</span>
+                    <button onClick={() => setMessage({ type: '', text: '' })} className="ml-auto p-2 rounded-xl hover:bg-white/10 transition-colors text-white/40 hover:text-white">
+                        <ChevronRight size={18} />
+                    </button>
                 </div>
-            </main>
-        </div>
+            )}
+        </LocationGate>
     );
 }

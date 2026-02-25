@@ -2,6 +2,7 @@ from sqlalchemy import create_engine
 from app.db.session import SessionLocal, Base, engine
 from app.models.user import User, UserRole
 from app.models.geofence import Geofence
+from app.models.attendance import Attendance
 from app.core.security import get_password_hash
 
 def init_db():
@@ -37,19 +38,21 @@ def init_db():
         db.add(employee)
         print("Employee user created: user@example.com / user123")
     
-    # Create sample geofence if not exists
-    geofence = db.query(Geofence).filter(Geofence.name == "Main Office").first()
-    if not geofence:
+    # Create sample geofence if none exist
+    geofence_count = db.query(Geofence).count()
+    if geofence_count == 0:
         geofence = Geofence(
-            name="Main Office",
-            description="Corporate Headquarters",
-            latitude=12.9716,  # Bangalore center
-            longitude=77.5946, 
-            radius=100.0,
-            is_active=True
-        )
+                name="BIT Campus",
+                description="Bannari Amman Institute of Tech",
+                latitude=11.4986,
+                longitude=77.2743,
+                radius=200.0,
+                is_active=True
+            )
         db.add(geofence)
-        print("Sample geofence 'Main Office' created")
+        print("Sample geofence 'BIT Campus' created")
+    else:
+        print(f"Skipping sample geofence creation: {geofence_count} existing perimeters found.")
     
     db.commit()
     db.close()

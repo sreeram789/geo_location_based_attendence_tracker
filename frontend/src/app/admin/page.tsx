@@ -6,20 +6,37 @@ import api from '@/lib/api';
 import {
     Users,
     Map as MapIcon,
-    Settings,
     Activity,
     Clock,
     CheckCircle2,
     AlertCircle,
     Plus,
     Trash2,
-    Search
+    Search,
+    Shield,
+    LayoutDashboard,
+    Radio,
+    LogOut,
+    Loader2,
+    ChevronRight,
+    Settings
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
+import { useGeolocation } from '@/hooks/useGeolocation';
+import LocationGate from '@/components/LocationGate';
 
 const AttendanceMap = dynamic(() => import('@/components/AttendanceMap'), {
     ssr: false,
-    loading: () => <div className="h-[400px] bg-slate-900 rounded-xl animate-pulse flex items-center justify-center text-slate-500">Initializing Map...</div>
+    loading: () => (
+        <div className="h-[450px] rounded-xl flex items-center justify-center"
+            style={{ background: 'var(--bg-input)' }}>
+            <div className="text-center">
+                <div className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin mx-auto mb-3"
+                    style={{ borderColor: 'var(--primary)', borderTopColor: 'transparent' }}></div>
+                <span className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Loading map...</span>
+            </div>
+        </div>
+    )
 });
 
 export default function AdminDashboard() {
@@ -32,6 +49,12 @@ export default function AdminDashboard() {
     const [searchQuery, setSearchQuery] = useState('');
     const [userSearchQuery, setUserSearchQuery] = useState('');
     const [draftingGeofence, setDraftingGeofence] = useState<{ latitude: number, longitude: number, radius: number, name: string } | null>(null);
+    const [message, setMessage] = useState({ type: '', text: '' });
+    const [isSaving, setIsSaving] = useState(false);
+
+    // Core geolocation hook
+    const geo = useGeolocation();
+    const [bypassGate, setBypassGate] = useState(false);
 
     const fetchData = useCallback(async () => {
         setIsLoading(true);
@@ -55,14 +78,14 @@ export default function AdminDashboard() {
 
     useEffect(() => {
         fetchData();
-        const interval = setInterval(fetchData, 30000); // Auto refresh every 30s
+        const interval = setInterval(fetchData, 30000);
         return () => clearInterval(interval);
     }, [fetchData]);
 
     const handleMapClick = (lat: number, lng: number) => {
+        setMessage({ type: '', text: '' });
         setDraftingGeofence(prev => ({
-            latitude: lat,
-            longitude: lng,
+            latitude: lat, longitude: lng,
             radius: prev?.radius || 100,
             name: prev?.name || ''
         }));
@@ -70,22 +93,28 @@ export default function AdminDashboard() {
 
     const handleCreateGeofence = async () => {
         if (!draftingGeofence || !draftingGeofence.name) return;
+        setIsSaving(true);
+        setMessage({ type: '', text: '' });
         try {
             await api.post('/geofences/', draftingGeofence);
             setDraftingGeofence(null);
-            fetchData();
-        } catch (err) {
-            console.error('Error creating geofence:', err);
+            await fetchData();
+            setMessage({ type: 'success', text: `Zone "${draftingGeofence.name}" created successfully.` });
+        } catch (err: any) {
+            setMessage({ type: 'error', text: err.response?.data?.detail || 'Failed to create zone.' });
+        } finally {
+            setIsSaving(false);
         }
     };
 
-    const handleDeleteGeofence = async (id: number) => {
-        if (!confirm('Are you sure you want to delete this geofence?')) return;
+    const handleDeleteGeofence = async (id: number, name: string) => {
+        if (!confirm(`Delete "${name}" zone?`)) return;
         try {
             await api.delete(`/geofences/${id}`);
-            fetchData();
-        } catch (err) {
-            console.error('Error deleting geofence:', err);
+            await fetchData();
+            setMessage({ type: 'success', text: `Zone "${name}" deleted.` });
+        } catch (err: any) {
+            setMessage({ type: 'error', text: 'Failed to delete zone.' });
         }
     };
 
@@ -98,7 +127,6 @@ export default function AdminDashboard() {
         }
     };
 
-    // ... filtered attendance and users logic ...
     const filteredAttendance = attendance.filter((record: any) =>
         record.user_id.toString().includes(searchQuery) ||
         record.id.toLowerCase().includes(searchQuery.toLowerCase())
@@ -110,272 +138,406 @@ export default function AdminDashboard() {
     );
 
     return (
-        <div className="min-h-screen bg-[#0f172a] text-slate-200">
-            {/* Nav */}
-            <nav className="glass-card sticky top-0 z-30 border-b border-white/5 px-6 py-4">
-                <div className="max-w-7xl mx-auto flex justify-between items-center">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                            <Settings className="text-white w-6 h-6" />
-                        </div>
-                        <span className="text-xl font-bold text-white tracking-tight">GeoTrack <span className="text-indigo-400 text-sm font-medium ml-1">Admin</span></span>
-                    </div>
-                    <div className="flex items-center gap-4">
-                        <span className="text-sm font-medium text-slate-400 px-3 py-1 bg-white/5 rounded-full border border-white/5">
-                            {user?.full_name}
-                        </span>
-                        <button onClick={logout} className="text-sm font-semibold text-red-400 hover:text-red-300 transition-colors">Logout</button>
-                    </div>
-                </div>
-            </nav>
+        <LocationGate
+            status={bypassGate ? 'granted' : geo.status}
+            error={geo.error}
+            onRetry={geo.retry}
+            allowBypass={true}
+            onBypass={() => setBypassGate(true)}
+        >
+            <div className="min-h-screen flex font-sans" style={{ background: 'var(--bg-page)' }}>
+                {/* ══════════════════════════════════════════════════
+                    SIDEBAR NAVIGATION
+                   ══════════════════════════════════════════════════ */}
+                <aside className="w-[280px] fixed inset-y-0 left-0 z-40 hidden lg:flex flex-col shadow-2xl"
+                    style={{ background: 'var(--bg-sidebar)' }}>
 
-            <main className="max-w-7xl mx-auto p-6 md:p-8 space-y-8">
-                {/* Stats Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="glass-card p-6 rounded-2xl border border-white/10 flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-500">
-                            <CheckCircle2 size={24} />
+                    {/* Brand */}
+                    <div className="px-8 py-10 flex items-center gap-4">
+                        <div className="w-11 h-11 rounded-2xl flex items-center justify-center shadow-lg"
+                            style={{ background: 'linear-gradient(135deg, var(--primary), #818cf8)' }}>
+                            <Shield className="text-white" size={24} />
                         </div>
                         <div>
-                            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider">Present Now</p>
-                            <p className="text-3xl font-black text-white">{stats.present}</p>
+                            <h1 className="text-lg font-black text-white tracking-widest uppercase">GeoTrack</h1>
+                            <p className="text-[10px] font-black tracking-widest uppercase opacity-40 text-white">Security Command</p>
                         </div>
                     </div>
-                    <div className="glass-card p-6 rounded-2xl border border-white/10 flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-500">
-                            <AlertCircle size={24} />
-                        </div>
-                        <div>
-                            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider">Absent / Late</p>
-                            <p className="text-3xl font-black text-white">{stats.absent}</p>
-                        </div>
-                    </div>
-                    <div className="glass-card p-6 rounded-2xl border border-white/10 flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-500">
-                            <Users size={24} />
-                        </div>
-                        <div>
-                            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider">Total Headcount</p>
-                            <p className="text-3xl font-black text-white">{stats.total}</p>
-                        </div>
-                    </div>
-                </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    {/* Map & Geofences */}
-                    <div className="lg:col-span-8 space-y-8">
-                        <div className="glass-card rounded-2xl border border-white/10 overflow-hidden">
-                            <div className="p-5 border-b border-white/5 flex justify-between items-center bg-white/5">
-                                <div>
-                                    <h3 className="font-bold text-lg flex items-center gap-2">
-                                        <MapIcon className="text-indigo-500" size={20} /> Geofence Management
-                                    </h3>
-                                    <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Click on map to place a new zone</p>
+                    {/* Nav items */}
+                    <nav className="flex-1 px-4 space-y-1">
+                        <p className="px-4 py-4 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Infrastructure</p>
+
+                        {[
+                            { icon: LayoutDashboard, label: 'Control Center', active: true },
+                            { icon: Activity, label: 'Telemetry log' },
+                            { icon: MapIcon, label: 'Spatial Zones' },
+                            { icon: Users, label: 'Fleet Access' },
+                        ].map((item, i) => (
+                            <a key={i} href="#" className={`flex items-center gap-3.5 px-4 py-3.5 rounded-2xl text-sm font-bold transition-all group ${item.active
+                                ? 'bg-white/10 text-white shadow-sm'
+                                : 'text-slate-400 hover:text-white hover:bg-white/5'
+                                }`}>
+                                <item.icon size={20} className={item.active ? 'text-[var(--primary)]' : 'group-hover:text-white'} />
+                                {item.label}
+                            </a>
+                        ))}
+                    </nav>
+
+                    {/* Footer Profile */}
+                    <div className="p-6">
+                        <div className="p-5 rounded-3xl bg-white/5 border border-white/5 backdrop-blur-md">
+                            <div className="flex items-center gap-4 mb-4">
+                                <div className="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-black shadow-inner"
+                                    style={{ background: 'var(--primary)', color: 'white' }}>
+                                    {user?.full_name?.[0] || 'A'}
                                 </div>
-                                {draftingGeofence && (
-                                    <button
-                                        onClick={() => setDraftingGeofence(null)}
-                                        className="text-xs font-bold text-red-400 hover:text-red-300 transition-colors"
-                                    >
-                                        Cancel Drafting
-                                    </button>
-                                )}
-                            </div>
-                            <div className="relative">
-                                <AttendanceMap
-                                    userLocation={null}
-                                    geofences={geofences}
-                                    isAdmin={true}
-                                    onMapClick={handleMapClick}
-                                    draftingGeofence={draftingGeofence}
-                                />
-
-                                {draftingGeofence && (
-                                    <div className="absolute bottom-4 left-4 right-4 bg-slate-900/95 backdrop-blur-md border border-emerald-500/30 p-4 rounded-xl shadow-2xl z-[1000] flex flex-col md:flex-row gap-4 items-end animate-in slide-in-from-bottom-4">
-                                        <div className="flex-1 space-y-4 w-full">
-                                            <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs uppercase tracking-widest">
-                                                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                                                Drafting New Zone
-                                            </div>
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                <div>
-                                                    <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Zone Name</label>
-                                                    <input
-                                                        type="text"
-                                                        placeholder="e.g. Main Lobby"
-                                                        className="w-full bg-white/5 border border-white/10 rounded-lg p-2 text-sm outline-none focus:ring-1 focus:ring-emerald-500"
-                                                        value={draftingGeofence.name}
-                                                        onChange={(e) => setDraftingGeofence({ ...draftingGeofence, name: e.target.value })}
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Radius (meters): {draftingGeofence.radius}m</label>
-                                                    <input
-                                                        type="range"
-                                                        min="10"
-                                                        max="1000"
-                                                        step="10"
-                                                        className="w-full accent-emerald-500"
-                                                        value={draftingGeofence.radius}
-                                                        onChange={(e) => setDraftingGeofence({ ...draftingGeofence, radius: Number(e.target.value) })}
-                                                    />
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <button
-                                            onClick={handleCreateGeofence}
-                                            disabled={!draftingGeofence.name}
-                                            className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white px-6 py-2.5 rounded-lg font-bold text-sm shadow-lg shadow-emerald-500/20 transition-all whitespace-nowrap"
-                                        >
-                                            Save Zone
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Attendance Table */}
-                        <div className="glass-card rounded-2xl border border-white/10 overflow-hidden">
-                            <div className="p-5 border-b border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                <h3 className="font-bold text-lg flex items-center gap-2">
-                                    <Activity className="text-blue-500" size={20} /> Live Attendance Log
-                                </h3>
-                                <div className="relative">
-                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
-                                    <input
-                                        type="text"
-                                        placeholder="Search User ID..."
-                                        className="bg-slate-900/50 border border-slate-700 text-white pl-9 pr-4 py-1.5 rounded-lg text-sm focus:ring-1 focus:ring-indigo-500 outline-none w-full md:w-64"
-                                        value={searchQuery}
-                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                    />
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-bold text-white truncate">{user?.full_name || 'Administrator'}</p>
+                                    <p className="text-[10px] font-bold truncate opacity-40 text-white">{user?.email}</p>
                                 </div>
                             </div>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse">
-                                    <thead>
-                                        <tr className="bg-white/5 text-slate-400 text-[10px] font-bold uppercase tracking-widest">
-                                            <th className="px-6 py-4">User</th>
-                                            <th className="px-6 py-4">Check-in</th>
-                                            <th className="px-6 py-4">Duration</th>
-                                            <th className="px-6 py-4">Location</th>
-                                            <th className="px-6 py-4">Status</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-white/5">
-                                        {filteredAttendance.map((record: any) => (
-                                            <tr key={record.id} className="hover:bg-white/5 transition-colors group">
-                                                <td className="px-6 py-4">
-                                                    <div className="flex flex-col">
-                                                        <span className="text-sm font-bold text-white">User #{record.user_id}</span>
-                                                        <span className="text-[10px] text-slate-500 font-mono italic">{record.id.slice(0, 8)}...</span>
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <div className="flex items-center gap-2 text-sm">
-                                                        <Clock size={14} className="text-slate-500" />
-                                                        {new Date(record.check_in_time).toLocaleTimeString()}
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <span className="text-sm font-mono text-slate-300">
-                                                        {record.total_duration ? `${record.total_duration}m` : 'Active'}
-                                                    </span>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <div className="text-[10px] text-blue-400 font-mono">
-                                                        {record.check_in_lat.toFixed(4)}, {record.check_in_long.toFixed(4)}
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <span className={`px-2 py-1 rounded-md text-[10px] font-bold ${record.check_out_time ? 'bg-slate-500/10 text-slate-400' : 'bg-green-500/10 text-green-400'}`}>
-                                                        {record.check_out_time ? 'COMPLETED' : 'ON-SITE'}
-                                                    </span>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
+                            <button
+                                onClick={logout}
+                                className="w-full py-3 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all hover:bg-white/10 active:scale-95 text-slate-300"
+                                style={{ background: 'rgba(255,255,255,0.03)' }}>
+                                <LogOut size={14} /> Termination
+                            </button>
                         </div>
                     </div>
+                </aside>
 
-                    {/* Sidebar: Geofence List & User Assignment */}
-                    <div className="lg:col-span-4 space-y-6">
-                        {/* User Assignment */}
-                        <div className="glass-card p-6 rounded-2xl border border-white/10">
-                            <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
-                                <Users className="text-purple-400" size={20} />
-                                Employee Assignment
-                            </h3>
-                            <div className="relative mb-4">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
-                                <input
-                                    type="text"
-                                    placeholder="Search employees..."
-                                    className="bg-slate-900/50 border border-slate-700 text-white pl-9 pr-4 py-2 rounded-xl text-xs focus:ring-1 focus:ring-purple-500 outline-none w-full"
-                                    value={userSearchQuery}
-                                    onChange={(e) => setUserSearchQuery(e.target.value)}
-                                />
+                {/* ══════════════════════════════════════════════════
+                    MAIN CONTENT
+                   ══════════════════════════════════════════════════ */}
+                <main className="flex-1 lg:ml-[280px]">
+                    {/* Header bar */}
+                    <header className="sticky top-0 z-30 px-8 py-5 flex items-center justify-between glass border-b border-[var(--border-default)]">
+                        <div className="flex items-center gap-4">
+                            <div className="hidden lg:flex items-center gap-3 px-4 py-2 rounded-2xl bg-slate-50 border border-slate-100 shadow-sm">
+                                <div className={`w-2 h-2 rounded-full ${geo.status !== 'granted' ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]'}`} />
+                                <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">
+                                    {geo.status !== 'granted' ? 'GPS BYPASS ACTIVE' : 'NETWORK SECURE'}
+                                </span>
                             </div>
-                            <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                                {filteredUsers.filter((u: any) => u.role !== 'admin').map((u: any) => (
-                                    <div key={u.id} className="p-3 bg-white/5 rounded-xl border border-white/5 space-y-2">
-                                        <div className="flex justify-between items-start">
-                                            <div>
-                                                <p className="text-xs font-bold text-white">{u.full_name}</p>
-                                                <p className="text-[10px] text-slate-500">{u.email}</p>
-                                            </div>
-                                            <span className="text-[10px] px-1.5 py-0.5 bg-purple-500/10 text-purple-400 rounded border border-purple-500/20 font-bold uppercase">
-                                                ID: {u.id}
-                                            </span>
+                        </div>
+                        <div className="flex items-center gap-4">
+                            <div className="px-4 py-2 rounded-2xl bg-indigo-50 text-[var(--primary)] text-[11px] font-black uppercase tracking-widest">
+                                Instance v4.2 PRO
+                            </div>
+                            <button className="p-2.5 rounded-xl hover:bg-slate-50 transition-colors text-slate-400">
+                                <Settings size={20} />
+                            </button>
+                        </div>
+                    </header>
+
+                    <div className="px-8 py-10 md:px-12 md:py-12 max-w-[1400px] mx-auto space-y-10">
+                        {/* Page Summary */}
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                            <div>
+                                <h2 className="text-4xl font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                                    System Command
+                                </h2>
+                                <p className="text-base font-medium mt-2 text-slate-400">
+                                    Monitoring <span className="text-slate-900 font-bold">{users.length}</span> active fleet members across <span className="text-slate-900 font-bold">{geofences.length}</span> security zones.
+                                </p>
+                            </div>
+                            <button onClick={fetchData} className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-white shadow-premium border border-slate-100 text-sm font-black transition-all hover:-translate-y-0.5 active:translate-y-0">
+                                <Activity size={18} className="text-[var(--primary)]" /> Resynchronize
+                            </button>
+                        </div>
+
+                        {/* Stats Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                            {[
+                                { label: 'Personnel Present', value: stats.present, color: 'emerald', icon: CheckCircle2 },
+                                { label: 'Terminal Inactivity', value: stats.absent, color: 'amber', icon: AlertCircle },
+                                { label: 'Total Fleet', value: stats.total, color: 'indigo', icon: Users },
+                            ].map((stat, i) => (
+                                <div key={i} className={`stat-card stat-card--${stat.color} group`}>
+                                    <div className="flex items-center gap-6">
+                                        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-transform group-hover:scale-110 shadow-lg`}
+                                            style={{ background: `var(--${stat.color}-light)` }}>
+                                            <stat.icon size={28} style={{ color: `var(--${stat.color})` }} />
                                         </div>
                                         <div>
-                                            <label className="text-[9px] font-bold text-slate-500 uppercase tracking-widest block mb-1">Required Location</label>
-                                            <select
-                                                className="w-full bg-slate-800 border border-slate-700 text-white text-[10px] p-2 rounded-lg outline-none focus:ring-1 focus:ring-purple-500"
-                                                value={u.assigned_geofence_id || ''}
-                                                onChange={(e) => handleAssignGeofence(u.id, e.target.value ? Number(e.target.value) : null)}
-                                            >
-                                                <option value="">Anywhere (No Restriction)</option>
-                                                {geofences.map((gf: any) => (
-                                                    <option key={gf.id} value={gf.id}>{gf.name}</option>
+                                            <p className="text-[11px] font-black uppercase tracking-[0.15em] text-slate-400 mb-1">{stat.label}</p>
+                                            <p className="text-3xl font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>{stat.value}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="grid grid-cols-1 xl:grid-cols-12 gap-10">
+                            {/* ── LEFT COL ──────────────────────── */}
+                            <div className="xl:col-span-8 space-y-10">
+                                {/* Infrastructure Map */}
+                                <div className="office-card group overflow-hidden">
+                                    <div className="px-8 py-6 flex justify-between items-center glass border-b border-[var(--border-default)]">
+                                        <div>
+                                            <h3 className="text-lg font-black flex items-center gap-3">
+                                                <div className="p-2 rounded-lg bg-indigo-50 text-[var(--primary)]">
+                                                    <Radio size={20} className="animate-pulse" />
+                                                </div>
+                                                Geospatial Command
+                                            </h3>
+                                        </div>
+                                        {draftingGeofence && (
+                                            <button
+                                                onClick={() => setDraftingGeofence(null)}
+                                                className="px-5 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all bg-red-50 text-red-600 border border-red-100 hover:bg-red-100">
+                                                Abort Deployment
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="relative border-b border-slate-100">
+                                        <AttendanceMap
+                                            userLocation={geo.location}
+                                            geofences={geofences}
+                                            isAdmin={true}
+                                            onMapClick={handleMapClick}
+                                            draftingGeofence={draftingGeofence}
+                                        />
+
+                                        {/* Geofence Editor Overlay */}
+                                        {draftingGeofence && (
+                                            <div className="absolute inset-x-6 bottom-6 z-[1000] p-8 glass rounded-[32px] shadow-2xl border-2 border-[var(--success)] animate-slide-up">
+                                                <div className="flex flex-col lg:flex-row gap-8 items-end">
+                                                    <div className="flex-1 space-y-6 w-full">
+                                                        <div className="flex items-center gap-3 text-[11px] font-black uppercase tracking-[0.2em] text-[var(--success)]">
+                                                            <div className="w-2 h-2 rounded-full bg-current shadow-[0_0_8px_currentColor]" />
+                                                            Tactical Zone Deployment
+                                                        </div>
+                                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                                            <div className="space-y-2">
+                                                                <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">Designation</label>
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="e.g. ALPHA_TERMINAL_1"
+                                                                    className="input-premium h-14 text-sm font-bold uppercase tracking-widest"
+                                                                    value={draftingGeofence.name}
+                                                                    onChange={(e) => setDraftingGeofence(prev => prev ? { ...prev, name: e.target.value } : null)}
+                                                                />
+                                                            </div>
+                                                            <div className="space-y-2">
+                                                                <label className="text-[11px] font-black uppercase tracking-widest text-slate-400 flex justify-between">
+                                                                    Effective Radius
+                                                                    <span className="text-slate-900 font-black">{draftingGeofence.radius}m</span>
+                                                                </label>
+                                                                <div className="pt-4">
+                                                                    <input
+                                                                        type="range" min="10" max="1000" step="10"
+                                                                        className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-emerald-500 bg-slate-200"
+                                                                        value={draftingGeofence.radius}
+                                                                        onChange={(e) => setDraftingGeofence(prev => prev ? { ...prev, radius: Number(e.target.value) } : null)}
+                                                                    />
+                                                                    <div className="flex justify-between text-[10px] font-black uppercase tracking-tighter opacity-30 mt-3">
+                                                                        <span>MIN_10M</span><span>MED_500M</span><span>MAX_1KM</span>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={handleCreateGeofence}
+                                                        disabled={!draftingGeofence.name || isSaving}
+                                                        className="w-full lg:w-48 h-14 bg-emerald-500 text-white rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-emerald-200 transition-all hover:bg-emerald-600 hover:-translate-y-1 active:translate-y-0 disabled:opacity-50">
+                                                        {isSaving ? <Loader2 className="animate-spin mx-auto" /> : 'Confirm Deploy'}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Map Toast */}
+                                    {message.text && (
+                                        <div className="p-6 bg-slate-50 flex items-center gap-4 animate-fade-in border-t border-slate-100">
+                                            <div className={`w-3 h-3 rounded-full ${message.type === 'error' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]'}`} />
+                                            <span className="text-sm font-bold text-slate-700">{message.text}</span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Fleet Telemetry Table */}
+                                <div className="office-card overflow-hidden">
+                                    <div className="px-8 py-7 flex flex-col md:flex-row md:items-center justify-between gap-6 glass border-b border-[var(--border-default)]">
+                                        <div>
+                                            <h3 className="text-lg font-black flex items-center gap-3">
+                                                <div className="p-2 rounded-lg bg-indigo-50 text-[var(--primary)]">
+                                                    <Activity size={20} />
+                                                </div>
+                                                Operational Telemetry
+                                            </h3>
+                                        </div>
+                                        <div className="relative group/search">
+                                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 transition-colors group-focus-within/search:text-[var(--primary)] text-slate-400" size={18} />
+                                            <input
+                                                type="text"
+                                                placeholder="Sifting log data..."
+                                                className="input-premium pl-12 w-full md:w-80 h-12 shadow-sm"
+                                                value={searchQuery}
+                                                onChange={(e) => setSearchQuery(e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-left">
+                                            <thead>
+                                                <tr className="bg-slate-50/50">
+                                                    <th className="px-8 py-5 text-[11px] font-black uppercase tracking-widest text-slate-400">Tactical ID</th>
+                                                    <th className="px-8 py-5 text-[11px] font-black uppercase tracking-widest text-slate-400">Timestamp</th>
+                                                    <th className="px-8 py-5 text-[11px] font-black uppercase tracking-widest text-slate-400">Runtime</th>
+                                                    <th className="px-8 py-5 text-[11px] font-black uppercase tracking-widest text-slate-400">Spatial Coords</th>
+                                                    <th className="px-8 py-5 text-[11px] font-black uppercase tracking-widest text-slate-400 text-right">Verification</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {filteredAttendance.map((record: any) => (
+                                                    <tr key={record.id} className="hover:bg-slate-50/50 transition-colors group">
+                                                        <td className="px-8 py-4">
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="w-10 h-10 rounded-xl bg-white shadow-premium flex items-center justify-center text-sm font-black text-slate-500">
+                                                                    #{record.user_id}
+                                                                </div>
+                                                                <span className="text-[12px] font-mono text-slate-400 group-hover:text-slate-900 transition-colors">{record.id.slice(0, 16).toUpperCase()}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-8 py-4">
+                                                            <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                                                                <Clock size={16} className="text-[var(--primary)]" />
+                                                                {new Date(record.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-8 py-4">
+                                                            <span className="px-3 py-1 rounded-full bg-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-600">
+                                                                {record.total_duration ? `${record.total_duration}m SEC` : 'STREAMING'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-8 py-4">
+                                                            <span className="text-[11px] font-mono font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-md">
+                                                                {record.check_in_lat.toFixed(6)}, {record.check_in_long.toFixed(6)}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-8 py-4 text-right">
+                                                            <div className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-2xl text-[10px] font-black uppercase tracking-widest ${record.check_out_time ? 'bg-slate-100 text-slate-400' : 'bg-emerald-500 text-white shadow-lg shadow-emerald-200'
+                                                                }`}>
+                                                                {record.check_out_time ? 'Terminal' : 'Active'}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
                                                 ))}
-                                            </select>
-                                        </div>
+                                            </tbody>
+                                        </table>
                                     </div>
-                                ))}
+                                </div>
                             </div>
-                        </div>
 
-                        <div className="glass-card p-6 rounded-2xl border border-white/10">
-                            <h3 className="font-bold text-lg mb-6 flex items-center gap-2">
-                                <div className="w-1.5 h-6 bg-indigo-500 rounded-full"></div>
-                                Managed Zones
-                            </h3>
-                            <div className="space-y-4">
-                                {geofences.map((gf: any) => (
-                                    <div key={gf.id} className="p-4 bg-slate-900/50 rounded-xl border border-white/5 hover:border-indigo-500/30 transition-all flex justify-between items-center group">
-                                        <div>
-                                            <p className="text-sm font-bold text-white">{gf.name}</p>
-                                            <p className="text-[10px] text-slate-500">{gf.radius}m radius</p>
+                            {/* ── RIGHT COL ─────────────────────── */}
+                            <div className="xl:col-span-4 space-y-8">
+                                {/* Fleet Management */}
+                                <div className="office-card p-8 bg-gradient-to-br from-white to-slate-50">
+                                    <div className="flex items-center justify-between mb-8">
+                                        <h3 className="text-lg font-black flex items-center gap-3">
+                                            <div className="p-2 rounded-lg bg-indigo-50 text-[var(--primary)]">
+                                                <Users size={20} />
+                                            </div>
+                                            Fleet Integrity
+                                        </h3>
+                                        <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-[var(--primary)] font-black text-xs">
+                                            {filteredUsers.length}
                                         </div>
-                                        <button
-                                            onClick={() => handleDeleteGeofence(gf.id)}
-                                            className="p-2 bg-red-500/10 text-red-400 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
                                     </div>
-                                ))}
-                                {geofences.length === 0 && (
-                                    <p className="text-center text-xs text-slate-500 italic py-4">No zones created yet.</p>
-                                )}
+
+                                    <div className="relative mb-6 group/search">
+                                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within/search:text-[var(--primary)] transition-colors" size={16} />
+                                        <input
+                                            type="text"
+                                            placeholder="Audit names/emails..."
+                                            className="input-premium pl-12 h-12 text-sm bg-white"
+                                            value={userSearchQuery}
+                                            onChange={(e) => setUserSearchQuery(e.target.value)}
+                                        />
+                                    </div>
+
+                                    <div className="space-y-4 max-h-[500px] overflow-y-auto custom-scrollbar pr-2">
+                                        {filteredUsers.filter((u: any) => u.role !== 'admin').map((u: any) => (
+                                            <div key={u.id} className="p-6 rounded-[24px] bg-white shadow-premium border border-slate-100 group hover:border-[var(--primary)] transition-all">
+                                                <div className="flex justify-between items-start mb-5">
+                                                    <div>
+                                                        <p className="text-sm font-black text-slate-900 leading-tight">{u.full_name}</p>
+                                                        <p className="text-[11px] font-bold text-slate-400 mt-1">{u.email}</p>
+                                                    </div>
+                                                    <span className="text-[10px] font-black uppercase tracking-widest text-[var(--primary)] px-2 py-1 rounded-lg bg-indigo-50">
+                                                        ID_{u.id}
+                                                    </span>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-300">Spatial Restriction</label>
+                                                    <div className="relative">
+                                                        <select
+                                                            className="input-premium h-11 text-xs font-bold cursor-pointer appearance-none bg-slate-50"
+                                                            value={u.assigned_geofence_id || ''}
+                                                            onChange={(e) => handleAssignGeofence(u.id, e.target.value ? Number(e.target.value) : null)}
+                                                        >
+                                                            <option value="">Full Range Access</option>
+                                                            {geofences.map((gf: any) => (
+                                                                <option key={gf.id} value={gf.id}>{gf.name}</option>
+                                                            ))}
+                                                        </select>
+                                                        <ChevronRight className="absolute right-4 top-1/2 -translate-y-1/2 rotate-90 opacity-20 pointer-events-none" size={14} />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Active Zones Feed */}
+                                <div className="office-card p-8">
+                                    <div className="flex items-center justify-between mb-8 pb-6 border-b border-slate-100">
+                                        <h3 className="text-lg font-black flex items-center gap-3">
+                                            <div className="p-2 rounded-lg bg-indigo-50 text-[var(--primary)]">
+                                                <MapIcon size={20} />
+                                            </div>
+                                            Spatial Clusters
+                                        </h3>
+                                    </div>
+
+                                    <div className="space-y-4">
+                                        {geofences.map((gf: any) => (
+                                            <div key={gf.id} className="p-5 rounded-2xl bg-slate-50 border border-slate-100 flex justify-between items-center group hover:bg-white hover:shadow-xl transition-all">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-slate-300 shadow-sm border border-slate-100 group-hover:text-[var(--primary)] transition-colors">
+                                                        <MapIcon size={18} />
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-sm font-black text-slate-800">{gf.name}</p>
+                                                        <p className="text-[10px] font-black uppercase tracking-tighter text-slate-400 mt-0.5">
+                                                            {gf.radius}m Radius · Perimeter {Math.round(2 * Math.PI * gf.radius)}m
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => handleDeleteGeofence(gf.id, gf.name)}
+                                                    className="p-3 rounded-xl opacity-0 group-hover:opacity-100 transition-all bg-red-50 text-red-500 hover:bg-red-500 hover:text-white">
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {geofences.length === 0 && (
+                                            <div className="text-center py-12">
+                                                <MapIcon size={40} className="mx-auto mb-4 opacity-10" />
+                                                <p className="text-sm font-bold text-slate-300">No active clusters detected</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            </main>
-        </div>
+                </main>
+            </div>
+        </LocationGate>
     );
 }
