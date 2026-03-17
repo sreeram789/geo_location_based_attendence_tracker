@@ -1,0 +1,20 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "c:\\Users\\asus\\Desktop\\project final sem\\logs\\.3e7aa76152bad4e84b86ae765fe2d75b3afb0083-audit.json",
+    "files": [
+        {
+            "date": 1773632336031,
+            "name": "c:\\Users\\asus\\Desktop\\project final sem\\logs\\mcp-puppeteer-2026-03-16.log",
+            "hash": "de70cda6de183d489019be3884aaa89e5770e7b390c9cb78ce785392abf1c057"
+        },
+        {
+            "date": 1773718110703,
+            "name": "c:\\Users\\asus\\Desktop\\project final sem\\logs\\mcp-puppeteer-2026-03-17.log",
+            "hash": "1332dfbf3742bc1707064f03bd6367fc7e4a5735b1fffc7a6037182b8cdcc845"
+        }
+    ],
+    "hashType": "sha256"
+}

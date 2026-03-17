@@ -6,15 +6,22 @@ import api from '@/lib/api';
 
 interface User {
     id: number;
+    username: string;
     email: string;
     full_name: string;
     role: string;
     assigned_geofence_id: number | null;
 }
 
+interface AuthResponse {
+    access_token: string;
+    token_type: string;
+    user: User;
+}
+
 interface AuthContextType {
-    user: User | null;
-    login: (token: string) => Promise<void>;
+    user: AuthResponse | null;
+    login: (authData: AuthResponse) => void;
     logout: () => void;
     isLoading: boolean;
 }
@@ -22,14 +29,20 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [user, setUser] = useState<User | null>(null);
+    const [user, setUser] = useState<AuthResponse | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const router = useRouter();
 
-    const fetchUser = useCallback(async () => {
+    const fetchUser = useCallback(async (token: string) => {
         try {
-            const response = await api.get('/users/me');
-            setUser(response.data);
+            const response = await api.get('/users/me', {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            setUser({
+                access_token: token,
+                token_type: 'bearer',
+                user: response.data
+            });
             return response.data;
         } catch {
             localStorage.removeItem('token');
@@ -43,21 +56,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     useEffect(() => {
         const token = localStorage.getItem('token');
         if (token) {
-            fetchUser();
+            fetchUser(token);
         } else {
             setIsLoading(false);
         }
     }, [fetchUser]);
 
-    const login = async (token: string) => {
-        localStorage.setItem('token', token);
-        const userData = await fetchUser();
-        if (userData) {
-            if (userData.role === 'admin') {
-                router.push('/admin');
-            } else {
-                router.push('/dashboard');
-            }
+    const login = (authData: AuthResponse) => {
+        localStorage.setItem('token', authData.access_token);
+        setUser(authData);
+        if (authData.user.role === 'admin') {
+            router.push('/admin');
+        } else {
+            router.push('/dashboard');
         }
     };
 

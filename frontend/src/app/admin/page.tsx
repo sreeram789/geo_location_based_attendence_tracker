@@ -1,543 +1,1031 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '@/context/AuthContext';
-import api from '@/lib/api';
+import { useEffect, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
+import dynamic from "next/dynamic";
 import {
-    Users,
-    Map as MapIcon,
-    Activity,
-    Clock,
-    CheckCircle2,
-    AlertCircle,
-    Plus,
-    Trash2,
-    Search,
-    Shield,
-    LayoutDashboard,
-    Radio,
-    LogOut,
-    Loader2,
-    ChevronRight,
-    Settings
-} from 'lucide-react';
-import dynamic from 'next/dynamic';
-import { useGeolocation } from '@/hooks/useGeolocation';
-import LocationGate from '@/components/LocationGate';
+  Users,
+  MapPin,
+  Calendar,
+  Clock,
+  Settings,
+  LogOut,
+  ChevronDown,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  Plus,
+  Trash2,
+  Edit3,
+  Save,
+  X,
+  Leaf,
+  Trees,
+  Flower2,
+  Sunrise,
+  Sunset,
+  Activity,
+  User,
+  Shield,
+  Sprout,
+} from "lucide-react";
 
-const AttendanceMap = dynamic(() => import('@/components/AttendanceMap'), {
-    ssr: false,
-    loading: () => (
-        <div className="h-[450px] rounded-xl flex items-center justify-center"
-            style={{ background: 'var(--bg-input)' }}>
-            <div className="text-center">
-                <div className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin mx-auto mb-3"
-                    style={{ borderColor: 'var(--primary)', borderTopColor: 'transparent' }}></div>
-                <span className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Loading map...</span>
-            </div>
-        </div>
-    )
+const AttendanceMap = dynamic(() => import("@/components/AttendanceMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="h-[500px] rounded-2xl flex items-center justify-center" style={{ background: "#f8f5f0" }}>
+      <div className="text-center">
+        <Loader2 className="w-8 h-8 animate-spin mx-auto text-[#6b8f71]" />
+        <p className="mt-3 text-[#6b5d4d]">Loading garden map...</p>
+      </div>
+    </div>
+  ),
 });
 
-export default function AdminDashboard() {
-    const { user, logout } = useAuth();
-    const [stats, setStats] = useState({ present: 0, absent: 0, total: 0 });
-    const [attendance, setAttendance] = useState([]);
-    const [geofences, setGeofences] = useState([]);
-    const [users, setUsers] = useState([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [searchQuery, setSearchQuery] = useState('');
-    const [userSearchQuery, setUserSearchQuery] = useState('');
-    const [draftingGeofence, setDraftingGeofence] = useState<{ latitude: number, longitude: number, radius: number, name: string } | null>(null);
-    const [message, setMessage] = useState({ type: '', text: '' });
-    const [isSaving, setIsSaving] = useState(false);
+interface UserItem {
+  id: number;
+  username: string;
+  email: string;
+  full_name: string;
+  role: string;
+  is_active: boolean;
+  assigned_geofence_id: number | null;
+}
 
-    // Core geolocation hook
-    const geo = useGeolocation();
-    const [bypassGate, setBypassGate] = useState(false);
+interface Geofence {
+  id: number;
+  name: string;
+  latitude: number;
+  longitude: number;
+  radius: number;
+}
 
-    const fetchData = useCallback(async () => {
-        setIsLoading(true);
-        try {
-            const [statsRes, attendanceRes, geofencesRes, usersRes] = await Promise.all([
-                api.get('/admin/attendance/stats'),
-                api.get('/admin/attendance/all'),
-                api.get('/geofences/'),
-                api.get('/users/')
-            ]);
-            setStats(statsRes.data);
-            setAttendance(attendanceRes.data);
-            setGeofences(geofencesRes.data);
-            setUsers(usersRes.data);
-        } catch (err) {
-            console.error('Error fetching admin data:', err);
-        } finally {
-            setIsLoading(false);
-        }
-    }, []);
+interface AttendanceRecord {
+  id: number;
+  user_id: number;
+  timestamp: string;
+  status: string;
+  latitude: number | null;
+  longitude: number | null;
+  distance_meters: number | null;
+  is_within_geofence: boolean | null;
+  user?: { full_name: string; username: string };
+}
 
-    useEffect(() => {
+export default function AdminPage() {
+  const { user, logout } = useAuth();
+  const router = useRouter();
+  const [activeTab, setActiveTab] = useState<"overview" | "users" | "geofence" | "attendance">("overview");
+  const [users, setUsers] = useState<UserItem[]>([]);
+  const [geofences, setGeofences] = useState<Geofence[]>([]);
+  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Form states
+  const [showUserForm, setShowUserForm] = useState(false);
+  const [showGeofenceForm, setShowGeofenceForm] = useState(false);
+  const [editingUser, setEditingUser] = useState<UserItem | null>(null);
+  const [editingGeofence, setEditingGeofence] = useState<Geofence | null>(null);
+  const [draftingGeofence, setDraftingGeofence] = useState<{ latitude: number; longitude: number; radius: number } | null>(null);
+
+  // User form
+  const [userForm, setUserForm] = useState({
+    username: "",
+    email: "",
+    full_name: "",
+    password: "",
+    role: "employee",
+    is_active: true,
+  });
+
+  // Geofence form
+  const [geofenceForm, setGeofenceForm] = useState({
+    name: "",
+    center_latitude: 0,
+    center_longitude: 0,
+    radius_meters: 100,
+  });
+
+  useEffect(() => {
+    if (!user || user.user?.role !== "admin") {
+      router.push("/login");
+      return;
+    }
+    fetchData();
+  }, [user, router]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const fetchData = async () => {
+    setIsLoading(true);
+    try {
+      const [usersRes, geofencesRes, attendanceRes] = await Promise.all([
+        fetch("http://localhost:8000/api/v1/users/", {
+          headers: { Authorization: `Bearer ${user?.access_token}` },
+        }),
+        fetch("http://localhost:8000/api/v1/geofences/", {
+          headers: { Authorization: `Bearer ${user?.access_token}` },
+        }),
+        fetch("http://localhost:8000/api/v1/attendance/admin/all", {
+          headers: { Authorization: `Bearer ${user?.access_token}` },
+        }),
+      ]);
+
+      if (usersRes.ok) setUsers(await usersRes.json());
+      if (geofencesRes.ok) setGeofences(await geofencesRes.json());
+      if (attendanceRes.ok) setAttendance(await attendanceRes.json());
+    } catch (error) {
+      console.error("Failed to fetch data:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    logout();
+    router.push("/login");
+  };
+
+  // User CRUD
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch("http://localhost:8000/api/v1/users/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${user?.access_token}`,
+        },
+        body: JSON.stringify(userForm),
+      });
+      if (res.ok) {
+        setShowUserForm(false);
+        setUserForm({ username: "", email: "", full_name: "", password: "", role: "employee", is_active: true });
         fetchData();
-        const interval = setInterval(fetchData, 30000);
-        return () => clearInterval(interval);
-    }, [fetchData]);
+      }
+    } catch (error) {
+      console.error("Failed to create user:", error);
+    }
+  };
 
-    const handleMapClick = (lat: number, lng: number) => {
-        setMessage({ type: '', text: '' });
-        setDraftingGeofence(prev => ({
-            latitude: lat, longitude: lng,
-            radius: prev?.radius || 100,
-            name: prev?.name || ''
-        }));
-    };
+  const handleUpdateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    try {
+      const res = await fetch(`http://localhost:8000/api/v1/users/${editingUser.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${user?.access_token}`,
+        },
+        body: JSON.stringify(userForm),
+      });
+      if (res.ok) {
+        setEditingUser(null);
+        setUserForm({ username: "", email: "", full_name: "", password: "", role: "employee", is_active: true });
+        fetchData();
+      }
+    } catch (error) {
+      console.error("Failed to update user:", error);
+    }
+  };
 
-    const handleCreateGeofence = async () => {
-        if (!draftingGeofence || !draftingGeofence.name) return;
-        setIsSaving(true);
-        setMessage({ type: '', text: '' });
-        try {
-            await api.post('/geofences/', draftingGeofence);
-            setDraftingGeofence(null);
-            await fetchData();
-            setMessage({ type: 'success', text: `Zone "${draftingGeofence.name}" created successfully.` });
-        } catch (err: any) {
-            setMessage({ type: 'error', text: err.response?.data?.detail || 'Failed to create zone.' });
-        } finally {
-            setIsSaving(false);
-        }
-    };
+  const handleDeleteUser = async (userId: number) => {
+    if (!confirm("Are you sure you want to delete this user?")) return;
+    try {
+      const res = await fetch(`http://localhost:8000/api/v1/users/${userId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${user?.access_token}` },
+      });
+      if (res.ok) fetchData();
+    } catch (error) {
+      console.error("Failed to delete user:", error);
+    }
+  };
 
-    const handleDeleteGeofence = async (id: number, name: string) => {
-        if (!confirm(`Delete "${name}" zone?`)) return;
-        try {
-            await api.delete(`/geofences/${id}`);
-            await fetchData();
-            setMessage({ type: 'success', text: `Zone "${name}" deleted.` });
-        } catch (err: any) {
-            setMessage({ type: 'error', text: 'Failed to delete zone.' });
-        }
-    };
+  // Geofence CRUD
+  const handleCreateGeofence = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      // Map frontend field names to backend expected names
+      const payload = {
+        name: geofenceForm.name,
+        latitude: geofenceForm.center_latitude,
+        longitude: geofenceForm.center_longitude,
+        radius: geofenceForm.radius_meters,
+      };
+      const res = await fetch("http://localhost:8000/api/v1/geofences/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${user?.access_token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        setShowGeofenceForm(false);
+        setGeofenceForm({ name: "", center_latitude: 0, center_longitude: 0, radius_meters: 100 });
+        setDraftingGeofence(null);
+        fetchData();
+      }
+    } catch (error) {
+      console.error("Failed to create geofence:", error);
+    }
+  };
 
-    const handleAssignGeofence = async (userId: number, geofenceId: number | null) => {
-        try {
-            await api.patch(`/users/${userId}`, { assigned_geofence_id: geofenceId });
-            fetchData();
-        } catch (err) {
-            console.error('Error assigning geofence:', err);
-        }
-    };
+  const handleUpdateGeofence = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingGeofence) return;
+    try {
+      // Map frontend field names to backend expected names
+      const payload = {
+        name: geofenceForm.name,
+        latitude: geofenceForm.center_latitude,
+        longitude: geofenceForm.center_longitude,
+        radius: geofenceForm.radius_meters,
+      };
+      const res = await fetch(`http://localhost:8000/api/v1/geofences/${editingGeofence.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${user?.access_token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        setEditingGeofence(null);
+        setGeofenceForm({ name: "", center_latitude: 0, center_longitude: 0, radius_meters: 100 });
+        setDraftingGeofence(null);
+        fetchData();
+      }
+    } catch (error) {
+      console.error("Failed to update geofence:", error);
+    }
+  };
 
-    const filteredAttendance = attendance.filter((record: any) =>
-        record.user_id.toString().includes(searchQuery) ||
-        record.id.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+  const handleDeleteGeofence = async (geofenceId: number) => {
+    if (!confirm("Are you sure you want to delete this geofence?")) return;
+    try {
+      const res = await fetch(`http://localhost:8000/api/v1/geofences/${geofenceId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${user?.access_token}` },
+      });
+      if (res.ok) fetchData();
+    } catch (error) {
+      console.error("Failed to delete geofence:", error);
+    }
+  };
 
-    const filteredUsers = users.filter((u: any) =>
-        u.full_name?.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
-        u.email.toLowerCase().includes(userSearchQuery.toLowerCase())
-    );
+  const handleMapClick = (lat: number, lng: number) => {
+    setGeofenceForm((prev) => ({ ...prev, center_latitude: lat, center_longitude: lng }));
+    setDraftingGeofence((prev) => prev ? { ...prev, latitude: lat, longitude: lng } : null);
+  };
 
-    return (
-        <LocationGate
-            status={bypassGate ? 'granted' : geo.status}
-            error={geo.error}
-            onRetry={geo.retry}
-            allowBypass={true}
-            onBypass={() => setBypassGate(true)}
-        >
-            <div className="min-h-screen flex font-sans" style={{ background: 'var(--bg-page)' }}>
-                {/* ══════════════════════════════════════════════════
-                    SIDEBAR NAVIGATION
-                   ══════════════════════════════════════════════════ */}
-                <aside className="w-[280px] fixed inset-y-0 left-0 z-40 hidden lg:flex flex-col shadow-2xl"
-                    style={{ background: 'var(--bg-sidebar)' }}>
+  const startGeofenceDraft = () => {
+    setDraftingGeofence({
+      latitude: geofenceForm.center_latitude || 11.4986,
+      longitude: geofenceForm.center_longitude || 77.2743,
+      radius: geofenceForm.radius_meters || 100,
+    });
+  };
 
-                    {/* Brand */}
-                    <div className="px-8 py-10 flex items-center gap-4">
-                        <div className="w-11 h-11 rounded-2xl flex items-center justify-center shadow-lg"
-                            style={{ background: 'linear-gradient(135deg, var(--primary), #818cf8)' }}>
-                            <Shield className="text-white" size={24} />
-                        </div>
-                        <div>
-                            <h1 className="text-lg font-black text-white tracking-widest uppercase">GeoTrack</h1>
-                            <p className="text-[10px] font-black tracking-widest uppercase opacity-40 text-white">Security Command</p>
-                        </div>
-                    </div>
+  if (!user) return null;
 
-                    {/* Nav items */}
-                    <nav className="flex-1 px-4 space-y-1">
-                        <p className="px-4 py-4 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Infrastructure</p>
+  const stats = {
+    totalUsers: users.length,
+    activeUsers: users.filter((u) => u.is_active).length,
+    totalGeofences: geofences.length,
+    todayAttendance: attendance.filter((a) => new Date(a.timestamp).toDateString() === new Date().toDateString()).length,
+  };
 
-                        {[
-                            { icon: LayoutDashboard, label: 'Control Center', active: true },
-                            { icon: Activity, label: 'Telemetry log' },
-                            { icon: MapIcon, label: 'Spatial Zones' },
-                            { icon: Users, label: 'Fleet Access' },
-                        ].map((item, i) => (
-                            <a key={i} href="#" className={`flex items-center gap-3.5 px-4 py-3.5 rounded-2xl text-sm font-bold transition-all group ${item.active
-                                ? 'bg-white/10 text-white shadow-sm'
-                                : 'text-slate-400 hover:text-white hover:bg-white/5'
-                                }`}>
-                                <item.icon size={20} className={item.active ? 'text-[var(--primary)]' : 'group-hover:text-white'} />
-                                {item.label}
-                            </a>
-                        ))}
-                    </nav>
+  const menuItems = [
+    { id: "overview", label: "Overview", icon: Activity },
+    { id: "users", label: "Users", icon: Users },
+    { id: "geofence", label: "Geofences", icon: MapPin },
+    { id: "attendance", label: "Attendance", icon: Calendar },
+  ];
 
-                    {/* Footer Profile */}
-                    <div className="p-6">
-                        <div className="p-5 rounded-3xl bg-white/5 border border-white/5 backdrop-blur-md">
-                            <div className="flex items-center gap-4 mb-4">
-                                <div className="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-black shadow-inner"
-                                    style={{ background: 'var(--primary)', color: 'white' }}>
-                                    {user?.full_name?.[0] || 'A'}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-bold text-white truncate">{user?.full_name || 'Administrator'}</p>
-                                    <p className="text-[10px] font-bold truncate opacity-40 text-white">{user?.email}</p>
-                                </div>
-                            </div>
-                            <button
-                                onClick={logout}
-                                className="w-full py-3 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all hover:bg-white/10 active:scale-95 text-slate-300"
-                                style={{ background: 'rgba(255,255,255,0.03)' }}>
-                                <LogOut size={14} /> Termination
-                            </button>
-                        </div>
-                    </div>
-                </aside>
-
-                {/* ══════════════════════════════════════════════════
-                    MAIN CONTENT
-                   ══════════════════════════════════════════════════ */}
-                <main className="flex-1 lg:ml-[280px]">
-                    {/* Header bar */}
-                    <header className="sticky top-0 z-30 px-8 py-5 flex items-center justify-between glass border-b border-[var(--border-default)]">
-                        <div className="flex items-center gap-4">
-                            <div className="hidden lg:flex items-center gap-3 px-4 py-2 rounded-2xl bg-slate-50 border border-slate-100 shadow-sm">
-                                <div className={`w-2 h-2 rounded-full ${geo.status !== 'granted' ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]'}`} />
-                                <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">
-                                    {geo.status !== 'granted' ? 'GPS BYPASS ACTIVE' : 'NETWORK SECURE'}
-                                </span>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                            <div className="px-4 py-2 rounded-2xl bg-indigo-50 text-[var(--primary)] text-[11px] font-black uppercase tracking-widest">
-                                Instance v4.2 PRO
-                            </div>
-                            <button className="p-2.5 rounded-xl hover:bg-slate-50 transition-colors text-slate-400">
-                                <Settings size={20} />
-                            </button>
-                        </div>
-                    </header>
-
-                    <div className="px-8 py-10 md:px-12 md:py-12 max-w-[1400px] mx-auto space-y-10">
-                        {/* Page Summary */}
-                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                            <div>
-                                <h2 className="text-4xl font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>
-                                    System Command
-                                </h2>
-                                <p className="text-base font-medium mt-2 text-slate-400">
-                                    Monitoring <span className="text-slate-900 font-bold">{users.length}</span> active fleet members across <span className="text-slate-900 font-bold">{geofences.length}</span> security zones.
-                                </p>
-                            </div>
-                            <button onClick={fetchData} className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-white shadow-premium border border-slate-100 text-sm font-black transition-all hover:-translate-y-0.5 active:translate-y-0">
-                                <Activity size={18} className="text-[var(--primary)]" /> Resynchronize
-                            </button>
-                        </div>
-
-                        {/* Stats Grid */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                            {[
-                                { label: 'Personnel Present', value: stats.present, color: 'emerald', icon: CheckCircle2 },
-                                { label: 'Terminal Inactivity', value: stats.absent, color: 'amber', icon: AlertCircle },
-                                { label: 'Total Fleet', value: stats.total, color: 'indigo', icon: Users },
-                            ].map((stat, i) => (
-                                <div key={i} className={`stat-card stat-card--${stat.color} group`}>
-                                    <div className="flex items-center gap-6">
-                                        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-transform group-hover:scale-110 shadow-lg`}
-                                            style={{ background: `var(--${stat.color}-light)` }}>
-                                            <stat.icon size={28} style={{ color: `var(--${stat.color})` }} />
-                                        </div>
-                                        <div>
-                                            <p className="text-[11px] font-black uppercase tracking-[0.15em] text-slate-400 mb-1">{stat.label}</p>
-                                            <p className="text-3xl font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>{stat.value}</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-
-                        <div className="grid grid-cols-1 xl:grid-cols-12 gap-10">
-                            {/* ── LEFT COL ──────────────────────── */}
-                            <div className="xl:col-span-8 space-y-10">
-                                {/* Infrastructure Map */}
-                                <div className="office-card group overflow-hidden">
-                                    <div className="px-8 py-6 flex justify-between items-center glass border-b border-[var(--border-default)]">
-                                        <div>
-                                            <h3 className="text-lg font-black flex items-center gap-3">
-                                                <div className="p-2 rounded-lg bg-indigo-50 text-[var(--primary)]">
-                                                    <Radio size={20} className="animate-pulse" />
-                                                </div>
-                                                Geospatial Command
-                                            </h3>
-                                        </div>
-                                        {draftingGeofence && (
-                                            <button
-                                                onClick={() => setDraftingGeofence(null)}
-                                                className="px-5 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all bg-red-50 text-red-600 border border-red-100 hover:bg-red-100">
-                                                Abort Deployment
-                                            </button>
-                                        )}
-                                    </div>
-                                    <div className="relative border-b border-slate-100">
-                                        <AttendanceMap
-                                            userLocation={geo.location}
-                                            geofences={geofences}
-                                            isAdmin={true}
-                                            onMapClick={handleMapClick}
-                                            draftingGeofence={draftingGeofence}
-                                        />
-
-                                        {/* Geofence Editor Overlay */}
-                                        {draftingGeofence && (
-                                            <div className="absolute inset-x-6 bottom-6 z-[1000] p-8 glass rounded-[32px] shadow-2xl border-2 border-[var(--success)] animate-slide-up">
-                                                <div className="flex flex-col lg:flex-row gap-8 items-end">
-                                                    <div className="flex-1 space-y-6 w-full">
-                                                        <div className="flex items-center gap-3 text-[11px] font-black uppercase tracking-[0.2em] text-[var(--success)]">
-                                                            <div className="w-2 h-2 rounded-full bg-current shadow-[0_0_8px_currentColor]" />
-                                                            Tactical Zone Deployment
-                                                        </div>
-                                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                                                            <div className="space-y-2">
-                                                                <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">Designation</label>
-                                                                <input
-                                                                    type="text"
-                                                                    placeholder="e.g. ALPHA_TERMINAL_1"
-                                                                    className="input-premium h-14 text-sm font-bold uppercase tracking-widest"
-                                                                    value={draftingGeofence.name}
-                                                                    onChange={(e) => setDraftingGeofence(prev => prev ? { ...prev, name: e.target.value } : null)}
-                                                                />
-                                                            </div>
-                                                            <div className="space-y-2">
-                                                                <label className="text-[11px] font-black uppercase tracking-widest text-slate-400 flex justify-between">
-                                                                    Effective Radius
-                                                                    <span className="text-slate-900 font-black">{draftingGeofence.radius}m</span>
-                                                                </label>
-                                                                <div className="pt-4">
-                                                                    <input
-                                                                        type="range" min="10" max="1000" step="10"
-                                                                        className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-emerald-500 bg-slate-200"
-                                                                        value={draftingGeofence.radius}
-                                                                        onChange={(e) => setDraftingGeofence(prev => prev ? { ...prev, radius: Number(e.target.value) } : null)}
-                                                                    />
-                                                                    <div className="flex justify-between text-[10px] font-black uppercase tracking-tighter opacity-30 mt-3">
-                                                                        <span>MIN_10M</span><span>MED_500M</span><span>MAX_1KM</span>
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                    <button
-                                                        onClick={handleCreateGeofence}
-                                                        disabled={!draftingGeofence.name || isSaving}
-                                                        className="w-full lg:w-48 h-14 bg-emerald-500 text-white rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-emerald-200 transition-all hover:bg-emerald-600 hover:-translate-y-1 active:translate-y-0 disabled:opacity-50">
-                                                        {isSaving ? <Loader2 className="animate-spin mx-auto" /> : 'Confirm Deploy'}
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {/* Map Toast */}
-                                    {message.text && (
-                                        <div className="p-6 bg-slate-50 flex items-center gap-4 animate-fade-in border-t border-slate-100">
-                                            <div className={`w-3 h-3 rounded-full ${message.type === 'error' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]'}`} />
-                                            <span className="text-sm font-bold text-slate-700">{message.text}</span>
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Fleet Telemetry Table */}
-                                <div className="office-card overflow-hidden">
-                                    <div className="px-8 py-7 flex flex-col md:flex-row md:items-center justify-between gap-6 glass border-b border-[var(--border-default)]">
-                                        <div>
-                                            <h3 className="text-lg font-black flex items-center gap-3">
-                                                <div className="p-2 rounded-lg bg-indigo-50 text-[var(--primary)]">
-                                                    <Activity size={20} />
-                                                </div>
-                                                Operational Telemetry
-                                            </h3>
-                                        </div>
-                                        <div className="relative group/search">
-                                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 transition-colors group-focus-within/search:text-[var(--primary)] text-slate-400" size={18} />
-                                            <input
-                                                type="text"
-                                                placeholder="Sifting log data..."
-                                                className="input-premium pl-12 w-full md:w-80 h-12 shadow-sm"
-                                                value={searchQuery}
-                                                onChange={(e) => setSearchQuery(e.target.value)}
-                                            />
-                                        </div>
-                                    </div>
-                                    <div className="overflow-x-auto">
-                                        <table className="w-full text-left">
-                                            <thead>
-                                                <tr className="bg-slate-50/50">
-                                                    <th className="px-8 py-5 text-[11px] font-black uppercase tracking-widest text-slate-400">Tactical ID</th>
-                                                    <th className="px-8 py-5 text-[11px] font-black uppercase tracking-widest text-slate-400">Timestamp</th>
-                                                    <th className="px-8 py-5 text-[11px] font-black uppercase tracking-widest text-slate-400">Runtime</th>
-                                                    <th className="px-8 py-5 text-[11px] font-black uppercase tracking-widest text-slate-400">Spatial Coords</th>
-                                                    <th className="px-8 py-5 text-[11px] font-black uppercase tracking-widest text-slate-400 text-right">Verification</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-slate-100">
-                                                {filteredAttendance.map((record: any) => (
-                                                    <tr key={record.id} className="hover:bg-slate-50/50 transition-colors group">
-                                                        <td className="px-8 py-4">
-                                                            <div className="flex items-center gap-3">
-                                                                <div className="w-10 h-10 rounded-xl bg-white shadow-premium flex items-center justify-center text-sm font-black text-slate-500">
-                                                                    #{record.user_id}
-                                                                </div>
-                                                                <span className="text-[12px] font-mono text-slate-400 group-hover:text-slate-900 transition-colors">{record.id.slice(0, 16).toUpperCase()}</span>
-                                                            </div>
-                                                        </td>
-                                                        <td className="px-8 py-4">
-                                                            <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
-                                                                <Clock size={16} className="text-[var(--primary)]" />
-                                                                {new Date(record.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                                                            </div>
-                                                        </td>
-                                                        <td className="px-8 py-4">
-                                                            <span className="px-3 py-1 rounded-full bg-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-600">
-                                                                {record.total_duration ? `${record.total_duration}m SEC` : 'STREAMING'}
-                                                            </span>
-                                                        </td>
-                                                        <td className="px-8 py-4">
-                                                            <span className="text-[11px] font-mono font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-md">
-                                                                {record.check_in_lat.toFixed(6)}, {record.check_in_long.toFixed(6)}
-                                                            </span>
-                                                        </td>
-                                                        <td className="px-8 py-4 text-right">
-                                                            <div className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-2xl text-[10px] font-black uppercase tracking-widest ${record.check_out_time ? 'bg-slate-100 text-slate-400' : 'bg-emerald-500 text-white shadow-lg shadow-emerald-200'
-                                                                }`}>
-                                                                {record.check_out_time ? 'Terminal' : 'Active'}
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* ── RIGHT COL ─────────────────────── */}
-                            <div className="xl:col-span-4 space-y-8">
-                                {/* Fleet Management */}
-                                <div className="office-card p-8 bg-gradient-to-br from-white to-slate-50">
-                                    <div className="flex items-center justify-between mb-8">
-                                        <h3 className="text-lg font-black flex items-center gap-3">
-                                            <div className="p-2 rounded-lg bg-indigo-50 text-[var(--primary)]">
-                                                <Users size={20} />
-                                            </div>
-                                            Fleet Integrity
-                                        </h3>
-                                        <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-[var(--primary)] font-black text-xs">
-                                            {filteredUsers.length}
-                                        </div>
-                                    </div>
-
-                                    <div className="relative mb-6 group/search">
-                                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within/search:text-[var(--primary)] transition-colors" size={16} />
-                                        <input
-                                            type="text"
-                                            placeholder="Audit names/emails..."
-                                            className="input-premium pl-12 h-12 text-sm bg-white"
-                                            value={userSearchQuery}
-                                            onChange={(e) => setUserSearchQuery(e.target.value)}
-                                        />
-                                    </div>
-
-                                    <div className="space-y-4 max-h-[500px] overflow-y-auto custom-scrollbar pr-2">
-                                        {filteredUsers.filter((u: any) => u.role !== 'admin').map((u: any) => (
-                                            <div key={u.id} className="p-6 rounded-[24px] bg-white shadow-premium border border-slate-100 group hover:border-[var(--primary)] transition-all">
-                                                <div className="flex justify-between items-start mb-5">
-                                                    <div>
-                                                        <p className="text-sm font-black text-slate-900 leading-tight">{u.full_name}</p>
-                                                        <p className="text-[11px] font-bold text-slate-400 mt-1">{u.email}</p>
-                                                    </div>
-                                                    <span className="text-[10px] font-black uppercase tracking-widest text-[var(--primary)] px-2 py-1 rounded-lg bg-indigo-50">
-                                                        ID_{u.id}
-                                                    </span>
-                                                </div>
-                                                <div className="space-y-2">
-                                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-300">Spatial Restriction</label>
-                                                    <div className="relative">
-                                                        <select
-                                                            className="input-premium h-11 text-xs font-bold cursor-pointer appearance-none bg-slate-50"
-                                                            value={u.assigned_geofence_id || ''}
-                                                            onChange={(e) => handleAssignGeofence(u.id, e.target.value ? Number(e.target.value) : null)}
-                                                        >
-                                                            <option value="">Full Range Access</option>
-                                                            {geofences.map((gf: any) => (
-                                                                <option key={gf.id} value={gf.id}>{gf.name}</option>
-                                                            ))}
-                                                        </select>
-                                                        <ChevronRight className="absolute right-4 top-1/2 -translate-y-1/2 rotate-90 opacity-20 pointer-events-none" size={14} />
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                {/* Active Zones Feed */}
-                                <div className="office-card p-8">
-                                    <div className="flex items-center justify-between mb-8 pb-6 border-b border-slate-100">
-                                        <h3 className="text-lg font-black flex items-center gap-3">
-                                            <div className="p-2 rounded-lg bg-indigo-50 text-[var(--primary)]">
-                                                <MapIcon size={20} />
-                                            </div>
-                                            Spatial Clusters
-                                        </h3>
-                                    </div>
-
-                                    <div className="space-y-4">
-                                        {geofences.map((gf: any) => (
-                                            <div key={gf.id} className="p-5 rounded-2xl bg-slate-50 border border-slate-100 flex justify-between items-center group hover:bg-white hover:shadow-xl transition-all">
-                                                <div className="flex items-center gap-4">
-                                                    <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-slate-300 shadow-sm border border-slate-100 group-hover:text-[var(--primary)] transition-colors">
-                                                        <MapIcon size={18} />
-                                                    </div>
-                                                    <div>
-                                                        <p className="text-sm font-black text-slate-800">{gf.name}</p>
-                                                        <p className="text-[10px] font-black uppercase tracking-tighter text-slate-400 mt-0.5">
-                                                            {gf.radius}m Radius · Perimeter {Math.round(2 * Math.PI * gf.radius)}m
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                                <button
-                                                    onClick={() => handleDeleteGeofence(gf.id, gf.name)}
-                                                    className="p-3 rounded-xl opacity-0 group-hover:opacity-100 transition-all bg-red-50 text-red-500 hover:bg-red-500 hover:text-white">
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            </div>
-                                        ))}
-                                        {geofences.length === 0 && (
-                                            <div className="text-center py-12">
-                                                <MapIcon size={40} className="mx-auto mb-4 opacity-10" />
-                                                <p className="text-sm font-bold text-slate-300">No active clusters detected</p>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </main>
+  return (
+    <div className="min-h-screen flex" style={{ background: "#faf8f5" }}>
+      {/* Sidebar */}
+      <aside
+        className={`fixed left-0 top-0 h-full z-40 transition-all duration-300 ${
+          sidebarCollapsed ? "w-20" : "w-64"
+        }`}
+        style={{
+          background: "linear-gradient(180deg, #f5f0e8 0%, #ebe5da 100%)",
+          borderRight: "1px solid #e8dfd2",
+        }}
+      >
+        {/* Logo */}
+        <div className="h-16 flex items-center justify-between px-4 border-b" style={{ borderColor: "#e8dfd2" }}>
+          {!sidebarCollapsed && (
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center"
+                style={{
+                  background: "linear-gradient(135deg, #6b8f71 0%, #5a7d61 100%)",
+                  boxShadow: "0 2px 10px rgba(107, 143, 113, 0.2)",
+                }}
+              >
+                <MapPin className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h1 className="font-display text-lg font-semibold text-[#3d3229]">GeoTrack</h1>
+                <p className="text-xs text-[#9a8b7a]">Admin Portal</p>
+              </div>
             </div>
-        </LocationGate>
-    );
+          )}
+          <button
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            className="p-2 rounded-lg hover:bg-[#ebe5da] transition-colors"
+          >
+            <ChevronDown
+              className={`w-5 h-5 text-[#9a8b7a] transition-transform ${sidebarCollapsed ? "rotate-180" : ""}`}
+            />
+          </button>
+        </div>
+
+        {/* Navigation */}
+        <nav className="p-4 space-y-2">
+          {menuItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id as typeof activeTab)}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+                activeTab === item.id
+                  ? "bg-[#6b8f71] text-white shadow-lg"
+                  : "text-[#6b5d4d] hover:bg-[#ebe5da]"
+              }`}
+              style={
+                activeTab === item.id
+                  ? { boxShadow: "0 4px 12px rgba(107, 143, 113, 0.25)" }
+                  : {}
+              }
+            >
+              <item.icon className="w-5 h-5" />
+              {!sidebarCollapsed && <span className="font-medium">{item.label}</span>}
+            </button>
+          ))}
+        </nav>
+
+        {/* Bottom section */}
+        {!sidebarCollapsed && (
+          <div className="absolute bottom-4 left-4 right-4">
+            <div
+              className="p-4 rounded-xl"
+              style={{
+                background: "rgba(196, 167, 125, 0.1)",
+                border: "1px solid rgba(196, 167, 125, 0.2)",
+              }}
+            >
+              <div className="flex items-center gap-3 mb-2">
+                <Leaf className="w-5 h-5 text-[#6b8f71]" />
+                <span className="text-sm font-medium text-[#3d3229]">Garden Tips</span>
+              </div>
+              <p className="text-xs text-[#9a8b7a]">
+                Remember to water the plants and check the perimeter daily.
+              </p>
+            </div>
+          </div>
+        )}
+      </aside>
+
+      {/* Main Content */}
+      <main
+        className={`flex-1 transition-all duration-300 ${sidebarCollapsed ? "ml-20" : "ml-64"}`}
+      >
+        {/* Header */}
+        <header
+          className="sticky top-0 z-30 backdrop-blur-xl border-b"
+          style={{
+            background: "rgba(255, 252, 247, 0.9)",
+            borderColor: "#e8dfd2",
+          }}
+        >
+          <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+            <div>
+              <h2 className="font-display text-xl font-semibold text-[#3d3229] capitalize">
+                {activeTab}
+              </h2>
+              <p className="text-xs text-[#9a8b7a]">Manage your garden attendance system</p>
+            </div>
+
+            {/* User Menu */}
+            <div className="relative" ref={userMenuRef}>
+              <button
+                onClick={() => setShowUserMenu(!showUserMenu)}
+                className="flex items-center gap-3 px-4 py-2 rounded-xl transition-all hover:bg-[#f5f0e8]"
+              >
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center"
+                  style={{ background: "linear-gradient(135deg, #c9a9a6 0%, #b89996 100%)" }}
+                >
+                  <Shield className="w-4 h-4 text-white" />
+                </div>
+                <div className="hidden sm:block text-left">
+                  <p className="text-sm font-medium text-[#3d3229]">{user.user?.full_name}</p>
+                  <p className="text-xs text-[#9a8b7a]">Administrator</p>
+                </div>
+                <ChevronDown
+                  className={`w-4 h-4 text-[#9a8b7a] transition-transform ${showUserMenu ? "rotate-180" : ""}`}
+                />
+              </button>
+
+              {showUserMenu && (
+                <div
+                  className="absolute right-0 mt-2 w-48 rounded-xl shadow-lg border p-2 animate-fade-in"
+                  style={{ background: "#fff", borderColor: "#e8dfd2" }}
+                >
+                  <button
+                    onClick={handleLogout}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-[#c98989] hover:bg-[#fcf2f2] transition-colors"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span className="text-sm font-medium">Sign out</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+
+        {/* Content */}
+        <div className="max-w-7xl mx-auto px-6 py-8">
+          {isLoading ? (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 className="w-8 h-8 animate-spin text-[#6b8f71]" />
+            </div>
+          ) : (
+            <>
+              {/* Overview Tab */}
+              {activeTab === "overview" && (
+                <div className="space-y-8 animate-fade-in">
+                  {/* Stats Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="stat-card stat-card--emerald">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs text-[#9a8b7a] uppercase tracking-wider">Total Users</span>
+                        <Users className="w-5 h-5 text-[#7a9f7a]" />
+                      </div>
+                      <p className="text-3xl font-display font-semibold text-[#3d3229]">{stats.totalUsers}</p>
+                      <p className="text-xs text-[#9a8b7a] mt-2">{stats.activeUsers} active</p>
+                    </div>
+
+                    <div className="stat-card stat-card--indigo">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs text-[#9a8b7a] uppercase tracking-wider">Geofences</span>
+                        <MapPin className="w-5 h-5 text-[#6b8f71]" />
+                      </div>
+                      <p className="text-3xl font-display font-semibold text-[#3d3229]">{stats.totalGeofences}</p>
+                      <p className="text-xs text-[#9a8b7a] mt-2">Perimeter zones</p>
+                    </div>
+
+                    <div className="stat-card stat-card--amber">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs text-[#9a8b7a] uppercase tracking-wider">Today's Activity</span>
+                        <Activity className="w-5 h-5 text-[#d4a574]" />
+                      </div>
+                      <p className="text-3xl font-display font-semibold text-[#3d3229]">{stats.todayAttendance}</p>
+                      <p className="text-xs text-[#9a8b7a] mt-2">Check-ins/out</p>
+                    </div>
+
+                    <div className="stat-card stat-card--rose">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs text-[#9a8b7a] uppercase tracking-wider">System Status</span>
+                        <Sprout className="w-5 h-5 text-[#c9a9a6]" />
+                      </div>
+                      <p className="text-3xl font-display font-semibold text-[#7a9f7a]">Healthy</p>
+                      <p className="text-xs text-[#9a8b7a] mt-2">All systems operational</p>
+                    </div>
+                  </div>
+
+                  {/* Recent Activity */}
+                  <div className="cottage-card p-6">
+                    <div className="flex items-center gap-3 mb-6">
+                      <div
+                        className="w-10 h-10 rounded-xl flex items-center justify-center"
+                        style={{ background: "linear-gradient(135deg, #c9a9a6 0%, #b89996 100%)" }}
+                      >
+                        <Clock className="w-5 h-5 text-white" />
+                      </div>
+                      <div>
+                        <h3 className="font-display text-lg font-semibold text-[#3d3229]">Recent Activity</h3>
+                        <p className="text-sm text-[#9a8b7a]">Latest attendance records</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      {attendance.slice(0, 5).map((record) => (
+                        <div
+                          key={record.id}
+                          className="flex items-center justify-between p-4 rounded-xl"
+                          style={{ background: "#faf8f5" }}
+                        >
+                          <div className="flex items-center gap-4">
+                            <div
+                              className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                                record.status === "check_in" ? "bg-[#eef5ee]" : "bg-[#f5eaea]"
+                              }`}
+                            >
+                              {record.status === "check_in" ? (
+                                <Sunrise className="w-5 h-5 text-[#7a9f7a]" />
+                              ) : (
+                                <Sunset className="w-5 h-5 text-[#c9a9a6]" />
+                              )}
+                            </div>
+                            <div>
+                              <p className="font-medium text-[#3d3229]">{record.user?.full_name || "Unknown"}</p>
+                              <p className="text-xs text-[#9a8b7a]">
+                                {new Date(record.timestamp).toLocaleString()}
+                              </p>
+                            </div>
+                          </div>
+                          <span
+                            className={`badge ${
+                              record.status === "check_in" ? "badge--active" : "badge--primary"
+                            }`}
+                          >
+                            {record.status === "check_in" ? "Check In" : "Check Out"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Users Tab */}
+              {activeTab === "users" && (
+                <div className="space-y-6 animate-fade-in">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-display text-xl font-semibold text-[#3d3229]">User Management</h3>
+                      <p className="text-sm text-[#9a8b7a]">Add, edit, and manage garden members</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setShowUserForm(true);
+                        setEditingUser(null);
+                        setUserForm({
+                          username: "",
+                          email: "",
+                          full_name: "",
+                          password: "",
+                          role: "employee",
+                          is_active: true,
+                        });
+                      }}
+                      className="btn-primary"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Add User</span>
+                    </button>
+                  </div>
+
+                  {/* User Form Modal */}
+                  {(showUserForm || editingUser) && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/20">
+                      <div
+                        className="w-full max-w-md rounded-2xl p-6 animate-slide-up"
+                        style={{ background: "#fff", border: "1px solid #e8dfd2" }}
+                      >
+                        <div className="flex items-center justify-between mb-6">
+                          <h4 className="font-display text-lg font-semibold text-[#3d3229]">
+                            {editingUser ? "Edit User" : "New User"}
+                          </h4>
+                          <button
+                            onClick={() => {
+                              setShowUserForm(false);
+                              setEditingUser(null);
+                            }}
+                            className="p-2 rounded-lg hover:bg-[#f5f0e8] transition-colors"
+                          >
+                            <X className="w-5 h-5 text-[#9a8b7a]" />
+                          </button>
+                        </div>
+
+                        <form
+                          onSubmit={editingUser ? handleUpdateUser : handleCreateUser}
+                          className="space-y-4"
+                        >
+                          <div>
+                            <label className="label">Username</label>
+                            <input
+                              type="text"
+                              value={userForm.username}
+                              onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
+                              className="input-cottage"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="label">Full Name</label>
+                            <input
+                              type="text"
+                              value={userForm.full_name}
+                              onChange={(e) => setUserForm({ ...userForm, full_name: e.target.value })}
+                              className="input-cottage"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="label">Email</label>
+                            <input
+                              type="email"
+                              value={userForm.email}
+                              onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
+                              className="input-cottage"
+                              required
+                            />
+                          </div>
+                          {!editingUser && (
+                            <div>
+                              <label className="label">Password</label>
+                              <input
+                                type="password"
+                                value={userForm.password}
+                                onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+                                className="input-cottage"
+                                required
+                              />
+                            </div>
+                          )}
+                          <div>
+                            <label className="label">Role</label>
+                            <select
+                              value={userForm.role}
+                              onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
+                              className="input-cottage"
+                            >
+                              <option value="employee">Employee</option>
+                              <option value="admin">Admin</option>
+                            </select>
+                          </div>
+                          <button type="submit" className="btn-primary w-full">
+                            <Save className="w-4 h-4" />
+                            <span>{editingUser ? "Update User" : "Create User"}</span>
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Users Table */}
+                  <div className="cottage-card overflow-hidden">
+                    <table className="table-premium">
+                      <thead>
+                        <tr>
+                          <th>User</th>
+                          <th>Email</th>
+                          <th>Role</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {users.map((u) => (
+                          <tr key={u.id}>
+                            <td>
+                              <div className="flex items-center gap-3">
+                                <div
+                                  className="w-9 h-9 rounded-xl flex items-center justify-center"
+                                  style={{ background: "linear-gradient(135deg, #c9a9a6 0%, #b89996 100%)" }}
+                                >
+                                  <User className="w-4 h-4 text-white" />
+                                </div>
+                                <div>
+                                  <p className="font-medium text-[#3d3229]">{u.full_name}</p>
+                                  <p className="text-xs text-[#9a8b7a]">@{u.username}</p>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="text-[#6b5d4d]">{u.email}</td>
+                            <td>
+                              <span className={`badge ${u.role === "admin" ? "badge--primary" : "badge--inactive"}`}>
+                                {u.role}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={`badge ${u.is_active ? "badge--active" : "badge--danger"}`}>
+                                {u.is_active ? "Active" : "Inactive"}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => {
+                                    setEditingUser(u);
+                                    setUserForm({
+                                      username: u.username,
+                                      email: u.email,
+                                      full_name: u.full_name,
+                                      password: "",
+                                      role: u.role,
+                                      is_active: u.is_active,
+                                    });
+                                  }}
+                                  className="p-2 rounded-lg hover:bg-[#f5f0e8] transition-colors"
+                                >
+                                  <Edit3 className="w-4 h-4 text-[#6b8f71]" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteUser(u.id)}
+                                  className="p-2 rounded-lg hover:bg-[#fcf2f2] transition-colors"
+                                >
+                                  <Trash2 className="w-4 h-4 text-[#c98989]" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Geofence Tab */}
+              {activeTab === "geofence" && (
+                <div className="space-y-6 animate-fade-in">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-display text-xl font-semibold text-[#3d3229]">Geofence Management</h3>
+                      <p className="text-sm text-[#9a8b7a]">Define garden perimeter zones</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setShowGeofenceForm(true);
+                        setEditingGeofence(null);
+                        setGeofenceForm({
+                          name: "",
+                          center_latitude: 11.4986,
+                          center_longitude: 77.2743,
+                          radius_meters: 100,
+                        });
+                        startGeofenceDraft();
+                      }}
+                      className="btn-primary"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Add Geofence</span>
+                    </button>
+                  </div>
+
+                  {/* Geofence Form */}
+                  {(showGeofenceForm || editingGeofence) && (
+                    <div className="cottage-card p-6">
+                      <div className="flex items-center justify-between mb-6">
+                        <h4 className="font-display text-lg font-semibold text-[#3d3229]">
+                          {editingGeofence ? "Edit Geofence" : "New Geofence"}
+                        </h4>
+                        <button
+                          onClick={() => {
+                            setShowGeofenceForm(false);
+                            setEditingGeofence(null);
+                            setDraftingGeofence(null);
+                          }}
+                          className="p-2 rounded-lg hover:bg-[#f5f0e8] transition-colors"
+                        >
+                          <X className="w-5 h-5 text-[#9a8b7a]" />
+                        </button>
+                      </div>
+
+                      <form
+                        onSubmit={editingGeofence ? handleUpdateGeofence : handleCreateGeofence}
+                        className="space-y-4"
+                      >
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="label">Name</label>
+                            <input
+                              type="text"
+                              value={geofenceForm.name}
+                              onChange={(e) => setGeofenceForm({ ...geofenceForm, name: e.target.value })}
+                              className="input-cottage"
+                              placeholder="Office Perimeter"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="label">Radius (meters)</label>
+                            <input
+                              type="number"
+                              value={geofenceForm.radius_meters}
+                              onChange={(e) => {
+                                const radius = parseInt(e.target.value);
+                                setGeofenceForm({ ...geofenceForm, radius_meters: radius });
+                                setDraftingGeofence((prev) => (prev ? { ...prev, radius } : null));
+                              }}
+                              className="input-cottage"
+                              min={10}
+                              required
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="label">Latitude</label>
+                            <input
+                              type="number"
+                              step="0.000001"
+                              value={geofenceForm.center_latitude}
+                              onChange={(e) => {
+                                const lat = parseFloat(e.target.value);
+                                setGeofenceForm({ ...geofenceForm, center_latitude: lat });
+                                setDraftingGeofence((prev) => (prev ? { ...prev, latitude: lat } : null));
+                              }}
+                              className="input-cottage"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="label">Longitude</label>
+                            <input
+                              type="number"
+                              step="0.000001"
+                              value={geofenceForm.center_longitude}
+                              onChange={(e) => {
+                                const lng = parseFloat(e.target.value);
+                                setGeofenceForm({ ...geofenceForm, center_longitude: lng });
+                                setDraftingGeofence((prev) => (prev ? { ...prev, longitude: lng } : null));
+                              }}
+                              className="input-cottage"
+                              required
+                            />
+                          </div>
+                        </div>
+
+                        <p className="text-sm text-[#9a8b7a]">
+                          <MapPin className="w-4 h-4 inline mr-1" />
+                          Click on the map to set the geofence center, or drag the marker to reposition.
+                        </p>
+
+                        <div className="map-container">
+                          <AttendanceMap
+                            userLocation={null}
+                            geofences={geofences
+                              .filter((g) => g.latitude !== undefined && g.longitude !== undefined)
+                              .map((g) => ({
+                              id: g.id,
+                              latitude: g.latitude || 0,
+                              longitude: g.longitude || 0,
+                              radius: g.radius || 100,
+                              name: g.name,
+                            }))}
+                            isAdmin={true}
+                            onMapClick={handleMapClick}
+                            draftingGeofence={draftingGeofence}
+                          />
+                        </div>
+
+                        <button type="submit" className="btn-primary">
+                          <Save className="w-4 h-4" />
+                          <span>{editingGeofence ? "Update Geofence" : "Create Geofence"}</span>
+                        </button>
+                      </form>
+                    </div>
+                  )}
+
+                  {/* Geofences List */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {geofences.map((gf) => (
+                      <div key={gf.id} className="cottage-card p-5">
+                        <div className="flex items-start justify-between mb-4">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="w-10 h-10 rounded-xl flex items-center justify-center"
+                              style={{ background: "linear-gradient(135deg, #6b8f71 0%, #5a7d61 100%)" }}
+                            >
+                              <MapPin className="w-5 h-5 text-white" />
+                            </div>
+                            <div>
+                              <h4 className="font-medium text-[#3d3229]">{gf.name}</h4>
+                              <p className="text-xs text-[#9a8b7a]">{gf.radius}m radius</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => {
+                                setEditingGeofence(gf);
+                                setGeofenceForm({
+                                  name: gf.name,
+                                  center_latitude: gf.latitude,
+                                  center_longitude: gf.longitude,
+                                  radius_meters: gf.radius,
+                                });
+                                startGeofenceDraft();
+                              }}
+                              className="p-2 rounded-lg hover:bg-[#f5f0e8] transition-colors"
+                            >
+                              <Edit3 className="w-4 h-4 text-[#6b8f71]" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteGeofence(gf.id)}
+                              className="p-2 rounded-lg hover:bg-[#fcf2f2] transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4 text-[#c98989]" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="text-xs text-[#9a8b7a] font-mono">
+                          {gf.latitude?.toFixed(6) ?? 'N/A'}, {gf.longitude?.toFixed(6) ?? 'N/A'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Attendance Tab */}
+              {activeTab === "attendance" && (
+                <div className="space-y-6 animate-fade-in">
+                  <div>
+                    <h3 className="font-display text-xl font-semibold text-[#3d3229]">Attendance Records</h3>
+                    <p className="text-sm text-[#9a8b7a]">View all check-in and check-out records</p>
+                  </div>
+
+                  <div className="cottage-card overflow-hidden">
+                    <table className="table-premium">
+                      <thead>
+                        <tr>
+                          <th>User</th>
+                          <th>Status</th>
+                          <th>Time</th>
+                          <th>Location</th>
+                          <th>Perimeter</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {attendance.map((record) => (
+                          <tr key={record.id}>
+                            <td>
+                              <div className="flex items-center gap-3">
+                                <div
+                                  className="w-9 h-9 rounded-xl flex items-center justify-center"
+                                  style={{ background: "linear-gradient(135deg, #c9a9a6 0%, #b89996 100%)" }}
+                                >
+                                  <User className="w-4 h-4 text-white" />
+                                </div>
+                                <span className="font-medium text-[#3d3229]">
+                                  {record.user?.full_name || "Unknown"}
+                                </span>
+                              </div>
+                            </td>
+                            <td>
+                              <span
+                                className={`badge ${
+                                  record.status === "check_in" ? "badge--active" : "badge--primary"
+                                }`}
+                              >
+                                {record.status === "check_in" ? "Check In" : "Check Out"}
+                              </span>
+                            </td>
+                            <td className="font-mono text-sm text-[#6b5d4d]">
+                              {new Date(record.timestamp).toLocaleString()}
+                            </td>
+                            <td className="text-sm text-[#6b5d4d]">
+                              {record.latitude != null && record.longitude != null
+                                ? `${record.latitude.toFixed(4)}, ${record.longitude.toFixed(4)}`
+                                : "N/A"}
+                            </td>
+                            <td>
+                              {record.is_within_geofence !== null ? (
+                                <span
+                                  className={`badge ${
+                                    record.is_within_geofence ? "badge--active" : "badge--danger"
+                                  }`}
+                                >
+                                  {record.is_within_geofence ? "Within" : "Outside"}
+                                </span>
+                              ) : (
+                                <span className="text-[#9a8b7a]">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </main>
+    </div>
+  );
 }

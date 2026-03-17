@@ -46,11 +46,11 @@ def init_db():
                 description="Bannari Amman Institute of Tech",
                 latitude=11.4986,
                 longitude=77.2743,
-                radius=200.0,
+                radius=2000.0,
                 is_active=True
             )
         db.add(geofence)
-        print("Sample geofence 'BIT Campus' created")
+        print("Sample geofence 'BIT Campus' created with 2km radius")
     else:
         print(f"Skipping sample geofence creation: {geofence_count} existing perimeters found.")
     

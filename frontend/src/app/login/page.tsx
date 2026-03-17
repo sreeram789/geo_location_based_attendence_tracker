@@ -1,192 +1,274 @@
 "use client";
 
-import React, { useState } from 'react';
-import { useAuth } from '@/context/AuthContext';
-import api from '@/lib/api';
-import { Lock, Mail, ArrowRight, ShieldCheck, MapPin, BarChart3, Users } from 'lucide-react';
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
+import { MapPin, Lock, User, Eye, EyeOff, Leaf, Trees, Flower2 } from "lucide-react";
 
 export default function LoginPage() {
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
-    const { login } = useAuth();
-    const [error, setError] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const router = useRouter();
+  const { login, user } = useAuth();
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setIsLoading(true);
-        setError('');
-        try {
-            const formData = new FormData();
-            formData.append('username', email);
-            formData.append('password', password);
+  useEffect(() => {
+    if (user) {
+      router.push("/dashboard");
+    }
+  }, [user, router]);
 
-            const response = await api.post('/login/access-token', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' },
-            });
-            await login(response.data.access_token);
-        } catch (err: any) {
-            setError(err.response?.data?.detail || 'Invalid credentials. Please try again.');
-        } finally {
-            setIsLoading(false);
-        }
-    };
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
 
-    return (
-        <div className="min-h-screen flex font-sans" style={{ background: 'var(--bg-page)' }}>
-            {/* Left Panel – Brand / Info */}
-            <div className="hidden lg:flex lg:w-[45%] relative overflow-hidden flex-col justify-between"
-                style={{
-                    background: 'linear-gradient(145deg, #0f1117 0%, #1a1040 50%, #2d1b69 100%)',
-                }}>
-                {/* Decorative elements */}
-                <div className="absolute top-0 right-0 w-96 h-96 rounded-full opacity-10"
-                    style={{ background: 'radial-gradient(circle, #635bff 0%, transparent 70%)' }}></div>
-                <div className="absolute bottom-0 left-0 w-80 h-80 rounded-full opacity-8"
-                    style={{ background: 'radial-gradient(circle, #22c55e 0%, transparent 70%)' }}></div>
+    try {
+      // Step 1: Get the access token
+      const loginRes = await fetch("http://localhost:8000/api/v1/login/access-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ username, password }),
+      });
 
-                {/* Grid overlay */}
-                <div className="absolute inset-0 opacity-[0.03]"
-                    style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)', backgroundSize: '40px 40px' }}></div>
+      if (!loginRes.ok) {
+        const data = await loginRes.json().catch(() => ({}));
+        setError(data.detail || "Invalid credentials");
+        setLoading(false);
+        return;
+      }
 
-                <div className="relative z-10 p-12 flex-1 flex flex-col justify-center">
-                    <div className="mb-12">
-                        <div className="flex items-center gap-3 mb-1">
-                            <div className="w-10 h-10 rounded-xl flex items-center justify-center"
-                                style={{ background: 'var(--primary)' }}>
-                                <ShieldCheck className="text-white" size={22} />
-                            </div>
-                            <span className="text-white text-2xl font-bold tracking-tight">GeoTrack</span>
-                        </div>
-                        <p className="text-sm mt-3" style={{ color: 'var(--text-on-dark-muted)' }}>BIT Campus Attendance System</p>
-                    </div>
+      const tokenData = await loginRes.json();
+      const accessToken = tokenData.access_token;
 
-                    <h1 className="text-4xl font-bold text-white leading-tight tracking-tight mb-6" style={{ letterSpacing: '-0.03em' }}>
-                        Smart attendance,<br />
-                        <span style={{ color: '#a78bfa' }}>verified by location.</span>
-                    </h1>
+      // Step 2: Fetch user data with the token
+      const userRes = await fetch("http://localhost:8000/api/v1/users/me", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
 
-                    <p className="text-base leading-relaxed mb-12" style={{ color: 'var(--text-on-dark-muted)', maxWidth: '380px' }}>
-                        Enterprise-grade geofencing technology ensures only verified check-ins from within designated campus boundaries.
-                    </p>
+      if (!userRes.ok) {
+        setError("Failed to fetch user data");
+        setLoading(false);
+        return;
+      }
 
-                    {/* Feature pills */}
-                    <div className="space-y-4">
-                        {[
-                            { icon: <MapPin size={16} />, text: 'GPS-verified check-ins' },
-                            { icon: <BarChart3 size={16} />, text: 'Real-time analytics dashboard' },
-                            { icon: <Users size={16} />, text: 'Multi-zone workforce management' },
-                        ].map((f, i) => (
-                            <div key={i} className="flex items-center gap-3 text-sm" style={{ color: 'var(--text-on-dark)' }}>
-                                <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-                                    style={{ background: 'rgba(99, 91, 255, 0.15)' }}>
-                                    <span style={{ color: '#a78bfa' }}>{f.icon}</span>
-                                </div>
-                                <span className="font-medium">{f.text}</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
+      const userData = await userRes.json();
 
-                <div className="relative z-10 px-12 pb-8">
-                    <p className="text-xs" style={{ color: 'var(--text-on-dark-muted)' }}>
-                        © 2026 GeoTrack · Bannari Amman Institute of Technology
-                    </p>
-                </div>
-            </div>
+      // Step 3: Login with combined data
+      login({
+        access_token: accessToken,
+        token_type: "bearer",
+        user: userData,
+      });
+    } catch {
+      setError("Unable to connect to server. Please try again.");
+      setLoading(false);
+    }
+  };
 
-            {/* Right Panel – Login Form */}
-            <div className="flex-1 flex items-center justify-center px-6 py-12">
-                <div className="w-full max-w-[400px]">
-                    {/* Mobile logo */}
-                    <div className="lg:hidden mb-10 text-center">
-                        <div className="inline-flex items-center gap-2.5">
-                            <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'var(--primary)' }}>
-                                <ShieldCheck className="text-white" size={20} />
-                            </div>
-                            <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>GeoTrack</span>
-                        </div>
-                    </div>
-
-                    <div className="mb-8">
-                        <h2 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--text-primary)', letterSpacing: '-0.025em' }}>
-                            Welcome back
-                        </h2>
-                        <p className="mt-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
-                            Sign in to access your attendance dashboard
-                        </p>
-                    </div>
-
-                    {/* Error */}
-                    {error && (
-                        <div className="mb-6 flex items-center gap-3 p-4 rounded-xl text-sm font-medium animate-fade-in"
-                            style={{ background: 'var(--danger-light)', color: '#dc2626', border: '1px solid #fecaca' }}>
-                            <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: 'var(--danger)' }}></div>
-                            {error}
-                        </div>
-                    )}
-
-                    <form onSubmit={handleSubmit} className="space-y-5">
-                        {/* Email */}
-                        <div>
-                            <label className="label">Email address</label>
-                            <div className="relative group">
-                                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 transition-colors"
-                                    style={{ color: 'var(--text-tertiary)' }} />
-                                <input
-                                    type="email"
-                                    className="input-premium pl-10"
-                                    placeholder="name@company.com"
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    required
-                                />
-                            </div>
-                        </div>
-
-                        {/* Password */}
-                        <div>
-                            <label className="label">Password</label>
-                            <div className="relative group">
-                                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 transition-colors"
-                                    style={{ color: 'var(--text-tertiary)' }} />
-                                <input
-                                    type="password"
-                                    className="input-premium pl-10"
-                                    placeholder="••••••••"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    required
-                                />
-                            </div>
-                        </div>
-
-                        {/* Submit */}
-                        <div className="pt-2">
-                            <button type="submit" disabled={isLoading} className="btn-primary w-full flex items-center justify-center gap-2">
-                                {isLoading ? (
-                                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                                ) : (
-                                    <>Sign in <ArrowRight className="w-4 h-4" /></>
-                                )}
-                            </button>
-                        </div>
-                    </form>
-
-                    {/* Demo credentials */}
-                    <div className="mt-8 pt-6" style={{ borderTop: '1px solid var(--border-light)' }}>
-                        <p className="text-center text-xs font-medium mb-3" style={{ color: 'var(--text-tertiary)' }}>Demo accounts</p>
-                        <div className="flex justify-center gap-2 text-xs font-medium flex-wrap">
-                            <span className="px-3 py-1.5 rounded-lg" style={{ background: 'var(--bg-badge)', color: 'var(--text-secondary)', border: '1px solid var(--border-default)' }}>
-                                admin@example.com
-                            </span>
-                            <span className="px-3 py-1.5 rounded-lg" style={{ background: 'var(--bg-badge)', color: 'var(--text-secondary)', border: '1px solid var(--border-default)' }}>
-                                user@example.com
-                            </span>
-                        </div>
-                    </div>
-                </div>
-            </div>
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden"
+      style={{ background: "linear-gradient(135deg, #faf8f5 0%, #f5f0e8 50%, #ebe5da 100%)" }}>
+      
+      {/* Decorative botanical elements */}
+      <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
+        {/* Top left corner decoration */}
+        <div className="absolute -top-20 -left-20 w-80 h-80 opacity-20">
+          <svg viewBox="0 0 200 200" className="w-full h-full text-[#6b8f71]">
+            <path fill="currentColor" d="M50,100 Q30,60 50,20 Q70,60 50,100" />
+            <path fill="currentColor" d="M50,100 Q20,80 10,50 Q40,70 50,100" opacity="0.7" />
+            <path fill="currentColor" d="M50,100 Q80,80 90,50 Q60,70 50,100" opacity="0.7" />
+            <circle cx="50" cy="15" r="8" fill="#c9a9a6" />
+          </svg>
         </div>
-    );
+        
+        {/* Top right corner decoration */}
+        <div className="absolute -top-10 -right-10 w-60 h-60 opacity-15">
+          <svg viewBox="0 0 200 200" className="w-full h-full text-[#c4a77d]">
+            <ellipse cx="100" cy="80" rx="40" ry="60" fill="currentColor" transform="rotate(30 100 100)" />
+            <ellipse cx="100" cy="80" rx="35" ry="50" fill="currentColor" opacity="0.5" transform="rotate(-20 100 100)" />
+          </svg>
+        </div>
+        
+        {/* Bottom left decoration */}
+        <div className="absolute -bottom-20 -left-10 w-72 h-72 opacity-15">
+          <svg viewBox="0 0 200 200" className="w-full h-full text-[#6b8f71]">
+            <path fill="currentColor" d="M100,180 Q60,140 80,80 Q100,140 100,180" />
+            <path fill="currentColor" d="M100,180 Q140,140 120,80 Q100,140 100,180" opacity="0.8" />
+            <circle cx="80" cy="75" r="6" fill="#c9a9a6" />
+            <circle cx="120" cy="75" r="6" fill="#c9a9a6" />
+          </svg>
+        </div>
+        
+        {/* Bottom right decoration */}
+        <div className="absolute bottom-10 -right-5 w-48 h-48 opacity-20">
+          <svg viewBox="0 0 100 100" className="w-full h-full text-[#c9a9a6]">
+            <circle cx="50" cy="50" r="30" fill="none" stroke="currentColor" strokeWidth="1" />
+            <circle cx="50" cy="50" r="20" fill="none" stroke="currentColor" strokeWidth="1" opacity="0.5" />
+            <circle cx="50" cy="50" r="10" fill="currentColor" opacity="0.3" />
+          </svg>
+        </div>
+        
+        {/* Floating leaves */}
+        <div className="absolute top-1/4 left-10 animate-float opacity-30">
+          <Leaf className="w-6 h-6 text-[#6b8f71]" />
+        </div>
+        <div className="absolute top-1/3 right-20 animate-float" style={{ animationDelay: "1s", opacity: 0.25 }}>
+          <Leaf className="w-5 h-5 text-[#c4a77d]" />
+        </div>
+        <div className="absolute bottom-1/3 left-1/4 animate-float" style={{ animationDelay: "2s", opacity: 0.2 }}>
+          <Flower2 className="w-5 h-5 text-[#c9a9a6]" />
+        </div>
+      </div>
+
+      {/* Main Card */}
+      <div className="w-full max-w-md relative">
+        {/* Decorative top border */}
+        <div className="absolute -top-px left-8 right-8 h-px bg-gradient-to-r from-transparent via-[#c4a77d] to-transparent" />
+        
+        <div className="cottage-card p-8 sm:p-10">
+          {/* Header */}
+          <div className="text-center mb-8">
+            {/* Logo */}
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <div className="relative">
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
+                  style={{ 
+                    background: "linear-gradient(135deg, #6b8f71 0%, #5a7d61 100%)",
+                    boxShadow: "0 4px 20px rgba(107, 143, 113, 0.25)"
+                  }}>
+                  <MapPin className="w-7 h-7 text-white" />
+                </div>
+                <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[#c9a9a6] flex items-center justify-center">
+                  <Leaf className="w-2.5 h-2.5 text-white" />
+                </div>
+              </div>
+            </div>
+            
+            <h1 className="font-display text-3xl font-semibold text-[#3d3229] tracking-tight">
+              GeoTrack
+            </h1>
+            <p className="text-[#6b5d4d] mt-2 text-base font-body">
+              Garden Attendance Portal
+            </p>
+          </div>
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {/* Username Field */}
+            <div className="space-y-2">
+              <label htmlFor="username" className="label">
+                Username
+              </label>
+              <div className="flex items-center gap-3">
+                <div className="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-colors"
+                  style={{
+                    background: "rgba(107, 143, 113, 0.1)",
+                    border: "1px solid rgba(107, 143, 113, 0.2)"
+                  }}>
+                  <User className="w-5 h-5 text-[#6b8f71]" />
+                </div>
+                <input
+                  id="username"
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="input-cottage flex-1"
+                  placeholder="Enter your username"
+                  required
+                  autoComplete="username"
+                />
+              </div>
+            </div>
+
+            {/* Password Field */}
+            <div className="space-y-2">
+              <label htmlFor="password" className="label">
+                Password
+              </label>
+              <div className="flex items-center gap-3">
+                <div className="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-colors"
+                  style={{
+                    background: "rgba(107, 143, 113, 0.1)",
+                    border: "1px solid rgba(107, 143, 113, 0.2)"
+                  }}>
+                  <Lock className="w-5 h-5 text-[#6b8f71]" />
+                </div>
+                <div className="relative flex-1">
+                  <input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="input-cottage w-full pr-12"
+                    placeholder="Enter your password"
+                    required
+                    autoComplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-[#9a8b7a] hover:text-[#6b8f71] transition-colors"
+                    tabIndex={-1}
+                  >
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Error Message */}
+            {error && (
+              <div className="p-4 rounded-xl text-sm flex items-start gap-3"
+                style={{ 
+                  background: "rgba(201, 137, 137, 0.1)",
+                  border: "1px solid rgba(201, 137, 137, 0.3)"
+                }}>
+                <div className="w-5 h-5 rounded-full bg-[#c98989] flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <span className="text-white text-xs">!</span>
+                </div>
+                <span className="text-[#8a5a5a]">{error}</span>
+              </div>
+            )}
+
+            {/* Submit Button */}
+            <button
+              type="submit"
+              disabled={loading}
+              className="btn-primary w-full mt-6"
+            >
+              {loading ? (
+                <div className="flex items-center gap-3">
+                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>Signing in...</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Trees className="w-5 h-5" />
+                  <span>Enter the Garden</span>
+                </div>
+              )}
+            </button>
+          </form>
+
+          {/* Footer */}
+          <div className="mt-8 pt-6 border-t border-[#e8dfd2]">
+            <p className="text-center text-sm text-[#9a8b7a]">
+              Need assistance?{" "}
+              <a href="#" className="text-[#6b8f71] hover:text-[#5a7d61] font-medium transition-colors">
+                Contact your administrator
+              </a>
+            </p>
+          </div>
+        </div>
+        
+        {/* Bottom decorative text */}
+        <p className="text-center text-xs text-[#9a8b7a] mt-6 opacity-70">
+          Cultivating attendance with care 🌿
+        </p>
+      </div>
+    </div>
+  );
 }

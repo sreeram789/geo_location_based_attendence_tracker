@@ -1,7 +1,7 @@
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Dict
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, date
 from app.api import deps
 from app.models.attendance import Attendance
 from app.models.geofence import Geofence
@@ -9,6 +9,27 @@ from app.schemas import attendance as attendance_schema
 from app.utils.geo import haversine_distance
 
 router = APIRouter()
+
+@router.get("/today-status")
+def get_today_attendance_status(
+    db: Session = Depends(deps.get_db),
+    current_user = Depends(deps.get_current_active_user),
+) -> Dict[str, bool]:
+    """Get attendance status for all sessions today"""
+    today = date.today()
+    records = db.query(Attendance).filter(
+        Attendance.user_id == current_user.id,
+        Attendance.session_name.isnot(None),
+    ).all()
+    
+    # Filter to today's records
+    today_records = [r for r in records if r.check_in_time.date() == today]
+    
+    return {
+        "Morning": any(r.session_name == "Morning" for r in today_records),
+        "Afternoon": any(r.session_name == "Afternoon" for r in today_records),
+        "Evening": any(r.session_name == "Evening" for r in today_records),
+    }
 
 @router.get("/history", response_model=List[attendance_schema.Attendance])
 def read_my_attendance(
@@ -45,14 +66,18 @@ def check_in(
             detail=f"Outside geofence area. Distance: {distance:.2f}m, Max allowed: {geofence.radius}m"
         )
     
-    # Check if already checked in
+    # Check if already checked in for this session today
+    today = date.today()
     existing = db.query(Attendance).filter(
         Attendance.user_id == current_user.id,
-        Attendance.check_out_time == None
-    ).first()
+        Attendance.session_name == check_in_in.session_name
+    ).all()
     
-    if existing:
-        raise HTTPException(status_code=400, detail="Already checked in")
+    # Filter to today's records
+    today_existing = [r for r in existing if r.check_in_time.date() == today]
+    
+    if today_existing:
+        raise HTTPException(status_code=400, detail=f"Already checked in for {check_in_in.session_name} session today")
     
     db_obj = Attendance(
         user_id=current_user.id,

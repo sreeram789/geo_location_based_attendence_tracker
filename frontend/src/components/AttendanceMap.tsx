@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap, useMapEvents, Tooltip } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import { Search, Loader2, Navigation } from 'lucide-react';
+import { Search, Loader2, Navigation, MapPin } from 'lucide-react';
 
 const icon = typeof window !== 'undefined' ? L.icon({
     iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
@@ -19,6 +19,38 @@ const draftingIcon = typeof window !== 'undefined' ? L.icon({
     iconSize: [30, 46],
     iconAnchor: [15, 46],
     className: 'drafting-marker'
+}) : null;
+
+// Custom cottagecore user marker icon
+const userIcon = typeof window !== 'undefined' ? L.divIcon({
+    className: 'user-location-marker',
+    html: `
+        <div style="
+            width: 20px;
+            height: 20px;
+            background: #6b8f71;
+            border-radius: 50%;
+            box-shadow: 0 2px 8px rgba(107, 143, 113, 0.4);
+            position: relative;
+            border: 3px solid white;
+        ">
+            <div style="
+                position: absolute;
+                inset: -6px;
+                border: 2px solid rgba(107, 143, 113, 0.3);
+                border-radius: 50%;
+                animation: gentle-pulse 2s ease-out infinite;
+            "></div>
+        </div>
+        <style>
+            @keyframes gentle-pulse {
+                0% { transform: scale(1); opacity: 1; }
+                100% { transform: scale(1.8); opacity: 0; }
+            }
+        </style>
+    `,
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
 }) : null;
 
 interface AttendanceMapProps {
@@ -79,10 +111,18 @@ function SearchControl({ onLocationSelect }: { onLocationSelect: (lat: number, l
                     type="text"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search campus or landmark..."
-                    className="w-full bg-[#1a1d2b]/90 backdrop-blur-md border border-white/10 rounded-2xl py-3.5 pl-11 pr-4 text-sm font-medium text-white shadow-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all placeholder:text-gray-500"
+                    placeholder="Search location..."
+                    className="w-full py-3 pl-11 pr-4 text-sm rounded-xl focus:outline-none transition-all"
+                    style={{
+                        background: 'rgba(255, 252, 247, 0.95)',
+                        backdropFilter: 'blur(12px)',
+                        border: '1px solid #e8dfd2',
+                        color: '#3d3229',
+                        fontFamily: 'Crimson Pro, Georgia, serif',
+                        boxShadow: '0 4px 12px rgba(61, 50, 41, 0.08)'
+                    }}
                 />
-                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-indigo-400 transition-colors">
+                <div className="absolute left-4 top-1/2 -translate-y-1/2 transition-colors text-[#6b8f71]">
                     {loading ? <Loader2 size={18} className="animate-spin" /> : <Search size={18} />}
                 </div>
             </form>
@@ -93,6 +133,7 @@ function SearchControl({ onLocationSelect }: { onLocationSelect: (lat: number, l
 export default function AttendanceMap({ userLocation, geofences, isAdmin, onMapClick, draftingGeofence }: AttendanceMapProps) {
     const [isMounted, setIsMounted] = useState(false);
     const [localDraftPos, setLocalDraftPos] = useState<{ lat: number, lng: number } | null>(null);
+    const [mapInstance, setMapInstance] = useState<L.Map | null>(null);
 
     useEffect(() => { setIsMounted(true); }, []);
 
@@ -104,32 +145,69 @@ export default function AttendanceMap({ userLocation, geofences, isAdmin, onMapC
         }
     }, [draftingGeofence?.latitude, draftingGeofence?.longitude]);
 
+    const handleRecenter = () => {
+        if (!mapInstance) return;
+        
+        // Priority: User location > First geofence > Default
+        if (userLocation) {
+            mapInstance.flyTo([userLocation.lat, userLocation.lng], 17, { duration: 1.5 });
+        } else if (geofences && geofences.length > 0) {
+            const valid = geofences.find(gf => gf.latitude !== 0 && gf.longitude !== 0);
+            if (valid) {
+                mapInstance.flyTo([valid.latitude, valid.longitude], 16, { duration: 1.5 });
+            }
+        }
+    };
+
     if (!isMounted) return (
-        <div className="h-[450px] rounded-xl animate-pulse" style={{ background: 'var(--bg-input)' }} />
+        <div className="h-[450px] rounded-2xl animate-pulse relative overflow-hidden"
+            style={{ background: '#f8f5f0' }}>
+            <div className="absolute inset-0 opacity-20"
+                style={{
+                    background: 'radial-gradient(circle at center, #6b8f71 0%, transparent 70%)'
+                }} />
+        </div>
     );
 
     const getCenter = (): [number, number] => {
-        if (geofences && geofences.length > 0) {
-            const valid = geofences.filter(gf => gf.latitude !== 0 && gf.longitude !== 0);
-            if (valid.length > 0) return [valid[0].latitude, valid[0].longitude];
+        // Check user location first
+        if (userLocation && userLocation.lat !== 0 && userLocation.lng !== 0) {
+            return [userLocation.lat, userLocation.lng];
         }
-        if (!userLocation) return [11.4986, 77.2743];
-        return [userLocation.lat, userLocation.lng];
+        // Then check geofences for valid coordinates
+        if (geofences && geofences.length > 0) {
+            const valid = geofences.find(gf =>
+                gf.latitude !== undefined &&
+                gf.longitude !== undefined &&
+                gf.latitude !== 0 &&
+                gf.longitude !== 0 &&
+                !isNaN(gf.latitude) &&
+                !isNaN(gf.longitude)
+            );
+            if (valid) return [valid.latitude, valid.longitude];
+        }
+        // Default fallback
+        return [11.4986, 77.2743];
     };
 
     const currentCenter = getCenter();
 
     return (
-        <div className="h-[500px] w-full map-container overflow-hidden rounded-xl border border-white/5 shadow-2xl relative"
-            style={{ background: '#0b0c10' }}>
+        <div className="h-[500px] w-full map-container overflow-hidden rounded-2xl relative"
+            style={{ 
+                background: '#f5f0e8',
+                border: '1px solid #e8dfd2',
+                boxShadow: '0 10px 20px -5px rgba(61, 50, 41, 0.08)'
+            }}>
             <MapContainer
                 center={currentCenter}
                 zoom={16}
                 style={{ height: '100%', width: '100%' }}
                 scrollWheelZoom={true}
                 zoomControl={false}
-                className="high-density-map"
+                ref={(map) => { if (map) setMapInstance(map); }}
             >
+                {/* Light, warm map tiles - Stamen Terrain style */}
                 <TileLayer
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -140,34 +218,64 @@ export default function AttendanceMap({ userLocation, geofences, isAdmin, onMapC
                 <ChangeView center={currentCenter} />
                 <MapEvents onClick={onMapClick} />
 
+                {/* User Location Marker */}
                 {userLocation && (
-                    <Marker position={[userLocation.lat, userLocation.lng]} icon={icon || undefined}>
-                        <Popup className="dark-popup">Your current GPS location</Popup>
+                    <Marker position={[userLocation.lat, userLocation.lng]} icon={userIcon || undefined}>
+                        <Popup className="cottage-popup">
+                            <div style={{ color: '#3d3229' }}>
+                                <div className="font-semibold text-sm" style={{ fontFamily: 'Playfair Display, Georgia, serif', color: '#6b8f71' }}>
+                                    Your Position
+                                </div>
+                                <div className="text-xs opacity-70 mt-1" style={{ fontFamily: 'JetBrains Mono, monospace' }}>
+                                    {userLocation.lat.toFixed(6)}, {userLocation.lng.toFixed(6)}
+                                </div>
+                            </div>
+                        </Popup>
                     </Marker>
                 )}
 
+                {/* Geofence Zones */}
                 {geofences.map((gf) => (
                     <Circle
                         key={gf.id}
                         center={[gf.latitude, gf.longitude]}
                         radius={gf.radius}
-                        pathOptions={{ color: '#635bff', fillColor: '#635bff', fillOpacity: 0.12, weight: 2 }}
+                        pathOptions={{ 
+                            color: '#6b8f71',
+                            fillColor: '#6b8f71', 
+                            fillOpacity: 0.12, 
+                            weight: 2,
+                            opacity: 0.6
+                        }}
                     >
-                        <Popup className="dark-popup">
-                            <div className="text-white">
-                                <div className="font-bold text-sm">{gf.name}</div>
-                                <div className="text-[10px] opacity-60 mt-0.5">{gf.radius}m Safe Zone</div>
+                        <Popup className="cottage-popup">
+                            <div style={{ color: '#3d3229' }}>
+                                <div className="font-semibold text-sm" style={{ fontFamily: 'Playfair Display, Georgia, serif', color: '#6b8f71' }}>
+                                    {gf.name}
+                                </div>
+                                <div className="text-xs opacity-60 mt-1" style={{ fontFamily: 'JetBrains Mono, monospace' }}>
+                                    {gf.radius}m Perimeter Zone
+                                </div>
                             </div>
                         </Popup>
                     </Circle>
                 ))}
 
-                {draftingGeofence && localDraftPos && (
+                {/* Drafting Geofence */}
+                {draftingGeofence && localDraftPos &&
+                 !isNaN(localDraftPos.lat) && !isNaN(localDraftPos.lng) && (
                     <>
                         <Circle
                             center={[localDraftPos.lat, localDraftPos.lng]}
-                            radius={draftingGeofence.radius}
-                            pathOptions={{ color: '#22c55e', fillColor: '#22c55e', fillOpacity: 0.2, weight: 2, dashArray: '6, 8' }}
+                            radius={draftingGeofence.radius || 100}
+                            pathOptions={{ 
+                                color: '#c4a77d', 
+                                fillColor: '#c4a77d', 
+                                fillOpacity: 0.15, 
+                                weight: 2, 
+                                dashArray: '8, 8',
+                                opacity: 0.8
+                            }}
                             interactive={false}
                         />
                         <Marker
@@ -190,29 +298,47 @@ export default function AttendanceMap({ userLocation, geofences, isAdmin, onMapC
                             }}
                         >
                             <Tooltip permanent direction="top" offset={[0, -40]} className="premium-tooltip">
-                                Drag to position fence
+                                Drag to position zone
                             </Tooltip>
                         </Marker>
                     </>
                 )}
             </MapContainer>
 
-            {/* Quick action buttons */}
+            {/* Control Buttons */}
             <div className="absolute bottom-6 right-6 z-[1000] flex flex-col gap-3">
                 <button
-                    onClick={() => {
-                        if (userLocation) {
-                            // Find the map instance and fly to user
-                            // This would require a ref to map, but ChangeView handles center updates
-                            // For immediate effect:
-                            onMapClick?.(userLocation.lat, userLocation.lng);
-                        }
+                    onClick={handleRecenter}
+                    className="w-12 h-12 rounded-xl flex items-center justify-center transition-all transform hover:scale-105 active:scale-95"
+                    style={{
+                        background: 'linear-gradient(135deg, #6b8f71 0%, #5a7d61 100%)',
+                        boxShadow: '0 4px 12px rgba(107, 143, 113, 0.25)'
                     }}
-                    className="w-12 h-12 rounded-2xl bg-[#635bff] text-white flex items-center justify-center shadow-lg hover:bg-[#5046e5] transition-all transform hover:scale-105 active:scale-95"
+                    title="Recenter to your location"
                 >
-                    <Navigation size={20} fill="white" />
+                    <Navigation size={20} fill="white" stroke="white" strokeWidth={2} />
                 </button>
             </div>
+
+            {/* Coordinates Display */}
+            {userLocation && (
+                <div className="absolute bottom-6 left-6 z-[1000] px-4 py-3 rounded-xl"
+                    style={{
+                        background: 'rgba(255, 252, 247, 0.95)',
+                        backdropFilter: 'blur(12px)',
+                        border: '1px solid #e8dfd2',
+                        boxShadow: '0 4px 12px rgba(61, 50, 41, 0.06)'
+                    }}>
+                    <div className="text-[10px] font-semibold uppercase tracking-wider mb-1"
+                        style={{ color: '#9a8b7a', fontFamily: 'Playfair Display, Georgia, serif' }}>
+                        GPS Coordinates
+                    </div>
+                    <div className="text-xs font-mono font-medium"
+                        style={{ color: '#6b8f71' }}>
+                        {userLocation.lat.toFixed(6)}, {userLocation.lng.toFixed(6)}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

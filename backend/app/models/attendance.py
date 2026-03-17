@@ -9,7 +9,7 @@ class Attendance(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    geofence_id = Column(Integer, ForeignKey("geofences.id"), nullable=False)
+    geofence_id = Column(Integer, ForeignKey("geofences.id", ondelete="SET NULL"), nullable=True)
     
     check_in_time = Column(DateTime(timezone=True), server_default=func.now())
     check_in_lat = Column(Float, nullable=False)
